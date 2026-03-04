@@ -1,0 +1,248 @@
+---
+title: Memory Management
+description: Custom allocators and predictable memory allocation patterns in Jdeflate
+---
+
+Jdeflate provides explicit control over memory allocation through a custom allocator interface, enabling predictable memory usage patterns essential for embedded systems and performance-critical applications.
+
+## The TAllocator Parameter
+
+All creation functions accept an optional `TAllocator` parameter:
+
+```c
+TDeflator* deflator_create(uintxx flags, intxx level, const TAllocator*);
+TInflator* inflator_create(uintxx flags, const TAllocator*);
+const TZStrm* zstrm_create(uintxx flags, intxx level, const TAllocator*);
+```
+
+### Using the Default Allocator
+
+Pass `NULL` to use the default system allocator:
+
+```c
+// Use default allocator
+TDeflator* deflator = deflator_create(0, 6, NULL);
+if (deflator == NULL) {
+    // Allocation failed
+}
+```
+
+### Custom Allocator Interface
+
+The `TAllocator` type is defined in `ctoolbox/memory.h`. To use a custom allocator, provide your own implementation:
+
+```c
+#include <ctoolbox/memory.h>
+
+// Custom allocator for pool-based allocation
+TAllocator pool_allocator = {
+    .alloc = my_pool_alloc,
+    .free = my_pool_free,
+    .realloc = my_pool_realloc,
+    .userdata = &my_pool
+};
+
+TDeflator* deflator = deflator_create(0, 6, &pool_allocator);
+```
+
+<Info>
+Custom allocators are particularly useful in embedded systems where you need to allocate from specific memory regions or track allocations precisely.
+</Info>
+
+## Allocation Timing
+
+### At Creation
+
+Memory is allocated when you create an instance:
+
+```c
+// Allocates internal structures for deflation
+TDeflator* deflator = deflator_create(0, 6, NULL);
+
+// Allocates internal structures for inflation
+TInflator* inflator = inflator_create(0, NULL);
+
+// Allocates wrapper and underlying deflator/inflator
+const TZStrm* zstrm = zstrm_create(ZSTRM_DEFLATE | ZSTRM_GZIP, 9, NULL);
+```
+
+The allocation size depends on:
+- **Compression level** (for deflator): Higher levels may require more memory
+- **Mode** (compression vs decompression)
+- **Flags**: Certain features may require additional buffers
+
+<Note>
+All memory needed for the lifetime of the object is allocated upfront during creation. There are no hidden allocations during streaming operations.
+</Note>
+
+### During Streaming
+
+**No allocations occur during streaming operations**. Functions like `deflator_deflate()` and `inflator_inflate()` work entirely with pre-allocated memory:
+
+```c
+// No memory allocation happens here
+result = deflator_deflate(state, final);
+result = inflator_inflate(state, final);
+```
+
+This predictable behavior is crucial for:
+- Real-time systems requiring bounded execution time
+- Environments where dynamic allocation during processing is prohibited
+- Performance-critical code paths
+
+### At Destruction
+
+All memory is freed when you destroy the instance:
+
+```c
+deflator_destroy(deflator);  // Frees all allocated memory
+inflator_destroy(inflator);  // Frees all allocated memory
+zstrm_destroy(zstrm);        // Frees all allocated memory
+```
+
+## Memory Reuse with Reset
+
+Instead of destroying and recreating instances, use reset functions to reuse allocated memory:
+
+```c
+// From jdeflate/deflator.h:151-152
+void deflator_reset(TDeflator*);
+
+// From jdeflate/inflator.h:136-138
+void inflator_reset(TInflator*);
+
+// From jdeflate/zstrm.h:196-198
+void zstrm_reset(const TZStrm*);
+```
+
+### Benefits of Resetting
+
+```c
+// Process multiple independent streams efficiently
+TDeflator* deflator = deflator_create(0, 6, NULL);
+
+for (int i = 0; i < num_files; i++) {
+    // Process file i
+    compress_file(deflator, files[i]);
+    
+    // Reset for next file - no reallocation
+    deflator_reset(deflator);
+}
+
+deflator_destroy(deflator);
+```
+
+<Warning>
+After calling reset, the state returns to its initial condition as if just created, but without the allocation overhead.
+</Warning>
+
+## User-Provided Buffers
+
+Jdeflate never allocates the source and target buffers - you provide them:
+
+```c
+// You allocate and manage these buffers
+uint8 source[SOURCE_SIZE];
+uint8 target[TARGET_SIZE];
+
+// Jdeflate only references them, never allocates
+deflator_setsrc(deflator, source, SOURCE_SIZE);
+deflator_settgt(deflator, target, TARGET_SIZE);
+```
+
+This design gives you complete control over:
+- Buffer allocation strategy (stack, heap, memory-mapped, etc.)
+- Buffer size and reuse
+- Memory alignment requirements
+- Placement in specific memory regions
+
+## Error Handling for Allocation Failures
+
+Creation functions return `NULL` on allocation failure:
+
+```c
+TDeflator* deflator = deflator_create(0, 6, NULL);
+if (deflator == NULL) {
+    // Could not allocate memory
+    // Check error code if needed
+    return ERROR_OUT_OF_MEMORY;
+}
+```
+
+For detailed error information, check the error field after creation succeeds:
+
+```c
+TInflator* inflator = inflator_create(0, NULL);
+if (inflator == NULL) {
+    // Allocation failed
+} else if (inflator->error != 0) {
+    // Created but in error state
+    if (inflator->error == INFLT_EOOM) {
+        // Out of memory during initialization
+    }
+    inflator_destroy(inflator);
+}
+```
+
+## Memory Footprint
+
+The memory footprint is predictable and depends on configuration:
+
+### Deflator Memory Usage
+
+- **Base structures**: Hash tables, window buffers
+- **Compression level impact**: Higher levels (7-9) use more memory than lower levels (1-6)
+- **Typical range**: A few kilobytes to tens of kilobytes
+
+### Inflator Memory Usage
+
+- **Base structures**: Huffman trees, window buffer
+- **Fixed size**: Independent of compression level (that's a compression-time setting)
+- **Typical range**: A few kilobytes
+
+### ZStrm Additional Memory
+
+```c
+// From jdeflate/zstrm.h:105-130
+struct TZStrm {
+    uint32 state;
+    uint32 error;
+    uint32 flags;
+    uint32 smode;
+    uint32 stype;
+    int32 level;
+    uintxx total;
+    uint32 dictid;
+    uint32 dict;
+    uint32 crc;
+    uint32 adler;
+    uintxx usedinput;
+};
+```
+
+The `TZStrm` wrapper adds minimal overhead beyond the underlying deflator/inflator.
+
+<Info>
+For embedded systems, you can measure exact memory usage by implementing a counting allocator that tracks allocation sizes.
+</Info>
+
+## Best Practices
+
+1. **Reuse instances** when processing multiple streams with the same settings
+2. **Use custom allocators** in memory-constrained environments
+3. **Pre-allocate buffers** at initialization rather than per-operation
+4. **Profile memory usage** during development to ensure it meets requirements
+5. **Handle allocation failures** gracefully at creation time
+
+```c
+// Good: Reuse pattern
+TDeflator* deflator = deflator_create(0, 6, &my_allocator);
+if (!deflator) return ERROR_OOM;
+
+for (int i = 0; i < num_streams; i++) {
+    process_stream(deflator, streams[i]);
+    deflator_reset(deflator);
+}
+
+deflator_destroy(deflator);
+```

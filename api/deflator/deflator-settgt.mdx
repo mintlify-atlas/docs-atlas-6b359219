@@ -1,0 +1,203 @@
+---
+title: 'deflator_settgt'
+description: 'Set the target buffer and size for the deflator instance'
+---
+
+## Function Signature
+
+```c
+CTB_INLINE
+void deflator_settgt(TDeflator*, uint8* target, uintxx size);
+```
+
+Sets the target buffer where compressed data will be written. This function must be called before [`deflator_deflate()`](/api/deflator/deflator-deflate).
+
+## Parameters
+
+<ParamField path="state" type="TDeflator*" required>
+  Pointer to the deflator instance.
+</ParamField>
+
+<ParamField path="target" type="uint8*" required>
+  Pointer to the target buffer where compressed data will be written. Must not be `NULL`.
+  
+  <Note>
+  Unlike the source buffer, the target buffer is non-const because the deflator writes to it.
+  </Note>
+</ParamField>
+
+<ParamField path="size" type="uintxx" required>
+  Size of the target buffer in bytes. Must be greater than 0.
+  
+  The deflator will write at most `size` bytes to the buffer.
+</ParamField>
+
+## Return Value
+
+This function does not return a value.
+
+## Implementation Details
+
+The inline implementation:
+
+```c
+CTB_INLINE void
+deflator_settgt(TDeflator* state, uint8* target, uintxx size)
+{
+    CTB_ASSERT(state && target && size);
+
+    state->target = state->tbgn = state->tend = target;
+    state->tend  += size;
+}
+```
+
+## Usage Example
+
+### Basic Usage
+
+```c
+#include <jdeflate/deflator.h>
+
+#define OUTPUT_SIZE 8192
+
+uint8 output_buffer[OUTPUT_SIZE];
+
+// Set the target buffer
+deflator_settgt(deflator, output_buffer, OUTPUT_SIZE);
+
+// Compress data
+eDEFLTResult result = deflator_deflate(deflator, DEFLT_NOFLUSH);
+
+// Check how much data was written
+uintxx bytes_written = deflator_tgtend(deflator);
+printf("Compressed %zu bytes\n", bytes_written);
+```
+
+### Handling Target Buffer Exhaustion
+
+```c
+uint8 target[4096];
+FILE* output_file = fopen("output.deflate", "wb");
+
+eDEFLTResult result;
+do {
+    // Set target buffer for this iteration
+    deflator_settgt(deflator, target, sizeof(target));
+    
+    // Compress
+    result = deflator_deflate(deflator, DEFLT_NOFLUSH);
+    
+    // Write the compressed data
+    uintxx bytes_written = deflator_tgtend(deflator);
+    fwrite(target, 1, bytes_written, output_file);
+    
+    // Continue if target buffer was exhausted
+} while (result == DEFLT_TGTEXHSTD);
+
+fclose(output_file);
+```
+
+### Complete Compression Loop
+
+```c
+#define SRC_SIZE 4096
+#define TGT_SIZE 4096
+
+int compress_stream(TDeflator* deflator, FILE* in, FILE* out) {
+    uint8 source[SRC_SIZE];
+    uint8 target[TGT_SIZE];
+    eDEFLTResult result;
+    size_t bytes_read;
+    int final = 0;
+    
+    do {
+        // Read input
+        bytes_read = fread(source, 1, SRC_SIZE, in);
+        if (bytes_read < SRC_SIZE) {
+            final = 1;
+        }
+        
+        deflator_setsrc(deflator, source, bytes_read);
+        
+        do {
+            // Set target buffer
+            deflator_settgt(deflator, target, TGT_SIZE);
+            
+            // Compress
+            result = deflator_deflate(deflator, final ? DEFLT_END : DEFLT_NOFLUSH);
+            
+            // Write output
+            uintxx size = deflator_tgtend(deflator);
+            if (size > 0) {
+                fwrite(target, 1, size, out);
+            }
+            
+        } while (result == DEFLT_TGTEXHSTD);
+        
+        if (result == DEFLT_ERROR) {
+            return -1;
+        }
+        
+    } while (result == DEFLT_SRCEXHSTD);
+    
+    return 0;
+}
+```
+
+### Dynamic Buffer Allocation
+
+```c
+#include <stdlib.h>
+
+// Allocate a target buffer
+size_t target_size = 8192;
+uint8* target = (uint8*)malloc(target_size);
+if (!target) {
+    fprintf(stderr, "Out of memory\n");
+    return -1;
+}
+
+// Use the buffer
+deflator_settgt(deflator, target, target_size);
+eDEFLTResult result = deflator_deflate(deflator, DEFLT_NOFLUSH);
+
+// Get compressed data
+uintxx bytes_written = deflator_tgtend(deflator);
+process_compressed_data(target, bytes_written);
+
+// Free the buffer
+free(target);
+```
+
+## Tracking Target Progress
+
+Use [`deflator_tgtend()`](deflator.h:129) to check how many bytes were written to the target buffer:
+
+```c
+deflator_settgt(deflator, target, target_size);
+eDEFLTResult result = deflator_deflate(deflator, DEFLT_NOFLUSH);
+
+// Get the number of bytes written
+uintxx bytes_written = deflator_tgtend(deflator);
+
+if (result == DEFLT_TGTEXHSTD) {
+    printf("Target buffer full: %zu bytes written\n", bytes_written);
+} else {
+    printf("Wrote %zu bytes to target\n", bytes_written);
+}
+```
+
+## Buffer Size Recommendations
+
+<Note>
+Choose a target buffer size that balances memory usage and performance:
+- **Too small**: Frequent `DEFLT_TGTEXHSTD` returns, more overhead
+- **Too large**: Wasted memory, especially for small inputs
+- **Recommended**: 4KB - 16KB for most use cases
+</Note>
+
+## Related Functions
+
+- [`deflator_deflate()`](/api/deflator/deflator-deflate) - Compress data to the target buffer
+- [`deflator_setsrc()`](/api/deflator/deflator-setsrc) - Set the source buffer
+- [`deflator_tgtend()`](deflator.h:129) - Get number of bytes written to target

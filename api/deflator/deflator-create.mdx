@@ -1,0 +1,105 @@
+---
+title: 'deflator_create'
+description: 'Create a deflator instance with specified compression level'
+---
+
+## Function Signature
+
+```c
+TDeflator* deflator_create(uintxx flags, intxx level, const TAllocator*);
+```
+
+Creates a new deflator instance with the specified compression level and configuration flags.
+
+## Parameters
+
+<ParamField path="flags" type="uintxx" required>
+  Configuration flags for the deflator. Can be:
+  - `0` for default behavior (dynamic Huffman codes)
+  - `DEFLT_FIXEDCODES` (0x01) to use fixed Huffman codes instead of dynamic codes
+  
+  Fixed codes can improve compression speed at the cost of compression ratio.
+</ParamField>
+
+<ParamField path="level" type="intxx" required>
+  Compression level. Higher levels provide better compression but are slower.
+  
+  <Note>
+  The valid range depends on the implementation. Check the documentation or source for specific level ranges.
+  </Note>
+</ParamField>
+
+<ParamField path="allocator" type="const TAllocator*" required>
+  Memory allocator to use for internal allocations. Pass `NULL` to use the default allocator.
+</ParamField>
+
+## Return Value
+
+<ResponseField name="return" type="TDeflator*">
+  Returns a pointer to the newly created deflator instance, or `NULL` if creation failed (e.g., out of memory or invalid level).
+  
+  If `NULL` is returned, check the system error codes for more information.
+</ResponseField>
+
+## Usage Example
+
+```c
+#include <jdeflate/deflator.h>
+
+// Create a deflator with default settings
+TDeflator* deflator = deflator_create(0, 6, NULL);
+if (!deflator) {
+    // Handle error - likely out of memory or invalid level
+    fprintf(stderr, "Failed to create deflator\n");
+    return -1;
+}
+
+// Use the deflator...
+
+// Clean up
+deflator_destroy(deflator);
+```
+
+### Using Fixed Huffman Codes
+
+```c
+// Create a deflator with fixed Huffman codes for faster compression
+TDeflator* deflator = deflator_create(DEFLT_FIXEDCODES, 6, NULL);
+if (!deflator) {
+    fprintf(stderr, "Failed to create deflator\n");
+    return -1;
+}
+```
+
+### Using Custom Allocator
+
+```c
+// Create a deflator with a custom memory allocator
+TAllocator custom_allocator = {
+    .alloc = my_alloc,
+    .free = my_free,
+    .realloc = my_realloc
+};
+
+TDeflator* deflator = deflator_create(0, 6, &custom_allocator);
+if (!deflator) {
+    fprintf(stderr, "Failed to create deflator\n");
+    return -1;
+}
+```
+
+## Error Handling
+
+The function returns `NULL` on failure. Possible failure reasons:
+
+- **Out of memory** (`DEFLT_EOOM`): Insufficient memory to allocate deflator structures
+- **Invalid level** (`DEFLT_ELEVEL`): The specified compression level is out of range
+
+<Warning>
+Always check the return value before using the deflator. Using a `NULL` deflator will cause crashes.
+</Warning>
+
+## Related Functions
+
+- [`deflator_destroy()`](/api/deflator/deflator-destroy) - Destroy a deflator instance
+- [`deflator_reset()`](/api/deflator/deflator-reset) - Reset a deflator to its initial state

@@ -1,0 +1,160 @@
+---
+title: 'zstrm_deflate'
+description: 'Compress data using the deflate algorithm'
+---
+
+## Function Signature
+
+```c
+uintxx zstrm_deflate(const TZStrm* zstrm, const void* source, uintxx n);
+```
+
+Compresses `n` bytes of data from the source buffer. The compressed output is written to the target callback function set with `zstrm_settargetfn()`.
+
+## Parameters
+
+<ParamField path="zstrm" type="const TZStrm*" required>
+  Pointer to a stream created with `ZSTRM_DEFLATE` mode.
+</ParamField>
+
+<ParamField path="source" type="const void*" required>
+  Pointer to the uncompressed source data to compress.
+</ParamField>
+
+<ParamField path="n" type="uintxx" required>
+  Number of bytes to compress from the source buffer. Must be limited to 2^32 - 1 bytes.
+</ParamField>
+
+## Return Value
+
+<ResponseField name="return" type="uintxx">
+  Number of bytes consumed from the source buffer. This will always equal `n` unless there is an error in the output callback function.
+  
+  Check `zstrm->error` after calling to detect errors.
+</ResponseField>
+
+## Examples
+
+### Basic Compression
+
+```c
+const TZStrm* zstrm;
+const char* data = "Hello, World!";
+uintxx data_size = strlen(data);
+
+/* Create compressor */
+zstrm = zstrm_create(ZSTRM_DEFLATE | ZSTRM_GZIP, 9, NULL);
+zstrm_settargetfn(zstrm, output_callback, userdata);
+
+/* Compress data */
+zstrm_deflate(zstrm, data, data_size);
+if (zstrm->error) {
+    fprintf(stderr, "Compression error: %u\n", zstrm->error);
+    zstrm_destroy(zstrm);
+    return -1;
+}
+
+/* Finalize and clean up */
+zstrm_flush(zstrm, 1);
+zstrm_destroy(zstrm);
+```
+
+### Compressing Multiple Chunks
+
+```c
+const TZStrm* zstrm;
+const size_t CHUNK_SIZE = 16384;
+uint8 buffer[CHUNK_SIZE];
+
+zstrm = zstrm_create(ZSTRM_DEFLATE | ZSTRM_GZIP, 6, NULL);
+zstrm_settargetfn(zstrm, file_write_callback, fp);
+
+/* Compress data in chunks */
+while (!feof(input_file)) {
+    size_t bytes_read = fread(buffer, 1, CHUNK_SIZE, input_file);
+    if (bytes_read > 0) {
+        zstrm_deflate(zstrm, buffer, bytes_read);
+        if (zstrm->error) {
+            fprintf(stderr, "Error during compression\n");
+            break;
+        }
+    }
+}
+
+/* Finalize */
+zstrm_flush(zstrm, 1);
+zstrm_destroy(zstrm);
+```
+
+### Output Callback Example
+
+```c
+/* Target callback that writes compressed data to a file */
+intxx file_write_callback(const uint8* buffer, uintxx size, void* user) {
+    FILE* fp = (FILE*)user;
+    size_t written = fwrite(buffer, 1, size, fp);
+    
+    if (written != size) {
+        return -1;  /* Error */
+    }
+    
+    return (intxx)written;
+}
+
+/* Usage */
+FILE* output_file = fopen("output.gz", "wb");
+zstrm = zstrm_create(ZSTRM_DEFLATE | ZSTRM_GZIP, 9, NULL);
+zstrm_settargetfn(zstrm, file_write_callback, output_file);
+
+zstrm_deflate(zstrm, source_data, source_size);
+zstrm_flush(zstrm, 1);
+
+zstrm_destroy(zstrm);
+fclose(output_file);
+```
+
+## Notes
+
+<Warning>
+  You must call `zstrm_settargetfn()` to set an output callback before calling `zstrm_deflate()`. Without an output callback, there is nowhere to write the compressed data.
+</Warning>
+
+<Note>
+  The function returns the number of input bytes consumed, which should equal `n` on success. If it returns a different value, check `zstrm->error` for the error code.
+</Note>
+
+<Note>
+  After compressing all data, you must call `zstrm_flush(zstrm, 1)` to finalize the stream and write any remaining buffered data.
+</Note>
+
+<Note>
+  The size of the source buffer must not exceed 2^32 - 1 bytes per call. For larger data, split it into multiple calls.
+</Note>
+
+## Error Handling
+
+Always check `zstrm->error` after calling `zstrm_deflate()`:
+
+```c
+zstrm_deflate(zstrm, data, size);
+if (zstrm->error != ZSTRM_OK) {
+    switch (zstrm->error) {
+        case ZSTRM_EIOERROR:
+            /* Output callback returned an error */
+            break;
+        case ZSTRM_EOOM:
+            /* Out of memory */
+            break;
+        default:
+            /* Other error */
+            break;
+    }
+}
+```
+
+## See Also
+
+- [zstrm_settargetfn](/api/zstrm/zstrm-settargetfn) - Set output callback
+- [zstrm_flush](/api/zstrm/zstrm-flush) - Finalize compression
+- [zstrm_inflate](/api/zstrm/zstrm-inflate) - Decompress data
+- [zstrm_create](/api/zstrm/zstrm-create) - Create a stream

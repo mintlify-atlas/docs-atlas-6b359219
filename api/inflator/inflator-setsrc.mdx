@@ -1,0 +1,189 @@
+---
+title: "inflator_setsrc"
+description: "Set the source buffer containing compressed data"
+---
+
+## Function Signature
+
+```c
+void inflator_setsrc(TInflator* state, const uint8* source, uintxx size);
+```
+
+Sets the source buffer for the inflator. This buffer contains the compressed DEFLATE data to be decompressed.
+
+## Implementation
+
+This is an inline function defined as:
+
+```c
+CTB_INLINE void
+inflator_setsrc(TInflator* state, const uint8* source, uintxx size)
+{
+    CTB_ASSERT(state && source && size);
+
+    if (CTB_EXPECT0(state->finalinput)) {
+        if (state->error == 0) {
+            struct TNonConstInflator {
+                uint32 state;
+                uint32 error;
+            }* p;
+
+            p = (struct TNonConstInflator*) state;
+            p->error = INFLT_EINCORRECTUSE;
+            p->state = 0xDEADBEEF;
+        }
+        return;
+    }
+
+    state->source = state->sbgn = state->send = source;
+    state->send  += size;
+}
+```
+
+## Parameters
+
+<ParamField path="state" type="TInflator*">
+  Pointer to the inflator instance. Must not be `NULL`.
+</ParamField>
+
+<ParamField path="source" type="const uint8*">
+  Pointer to the buffer containing compressed data. Must not be `NULL`.
+  
+  The buffer must remain valid until the next call to `inflator_setsrc()` or until `inflator_inflate()` returns a result other than `INFLT_TGTEXHSTD`.
+</ParamField>
+
+<ParamField path="size" type="uintxx">
+  Size of the source buffer in bytes. Must be greater than 0.
+</ParamField>
+
+## Return Value
+
+This function does not return a value.
+
+## Usage Example
+
+```c
+#include <jdeflate/inflator.h>
+
+#define BUFFER_SIZE 8192
+
+TInflator* inflator = inflator_create(0, NULL);
+
+uint8 compressed_data[BUFFER_SIZE];
+uint8 output_data[BUFFER_SIZE];
+
+// Read compressed data from somewhere
+uintxx bytes_read = read_compressed_data(compressed_data, BUFFER_SIZE);
+
+// Set the source buffer
+inflator_setsrc(inflator, compressed_data, bytes_read);
+
+// Set target and inflate
+inflator_settgt(inflator, output_data, BUFFER_SIZE);
+eINFLTResult result = inflator_inflate(inflator, 0);
+
+// Process result...
+```
+
+## Streaming Example
+
+```c
+#include <jdeflate/inflator.h>
+#include <stdio.h>
+
+#define CHUNK_SIZE 16384
+
+int decompress_stream(FILE* input, FILE* output) {
+    TInflator* inflator = inflator_create(0, NULL);
+    uint8 in_buf[CHUNK_SIZE];
+    uint8 out_buf[CHUNK_SIZE];
+    eINFLTResult result;
+    int final = 0;
+
+    do {
+        // Read next chunk of compressed data
+        size_t bytes_read = fread(in_buf, 1, CHUNK_SIZE, input);
+        if (bytes_read == 0) break;
+        
+        if (bytes_read < CHUNK_SIZE || feof(input)) {
+            final = 1;
+        }
+
+        // Set source buffer with new data
+        inflator_setsrc(inflator, in_buf, bytes_read);
+
+        do {
+            inflator_settgt(inflator, out_buf, CHUNK_SIZE);
+            result = inflator_inflate(inflator, final);
+
+            // Write decompressed output
+            uintxx written = inflator_tgtend(inflator);
+            fwrite(out_buf, 1, written, output);
+
+        } while (result == INFLT_TGTEXHSTD);
+
+        if (result == INFLT_ERROR) {
+            fprintf(stderr, "Error: %u\n", inflator->error);
+            inflator_destroy(inflator);
+            return -1;
+        }
+
+    } while (result == INFLT_SRCEXHSTD);
+
+    inflator_destroy(inflator);
+    return 0;
+}
+```
+
+## Checking Bytes Consumed
+
+```c
+#include <jdeflate/inflator.h>
+
+TInflator* inflator = inflator_create(0, NULL);
+uint8 source[1024];
+uint8 target[2048];
+
+// Set buffers
+inflator_setsrc(inflator, source, 1024);
+inflator_settgt(inflator, target, 2048);
+
+// Inflate
+eINFLTResult result = inflator_inflate(inflator, 1);
+
+// Check how many bytes were consumed from source
+uintxx bytes_consumed = inflator_srcend(inflator);
+printf("Consumed %llu bytes from source\n", bytes_consumed);
+
+// Check how many bytes were written to target
+uintxx bytes_written = inflator_tgtend(inflator);
+printf("Wrote %llu bytes to target\n", bytes_written);
+```
+
+## Notes
+
+<Note>
+- The source buffer must remain valid until `inflator_inflate()` consumes it or you set a new source buffer.
+- You can call `inflator_setsrc()` multiple times to provide data in chunks.
+- Use `inflator_srcend()` to check how many bytes have been consumed from the current source buffer.
+- The inflator does not copy the source data; it reads directly from your buffer.
+</Note>
+
+<Warning>
+- Do not call `inflator_setsrc()` after setting the `final` flag to a non-zero value in `inflator_inflate()`. This will set the error to `INFLT_EINCORRECTUSE`.
+- All parameters must be valid (non-NULL for pointers, non-zero for size). The function asserts these conditions.
+- Do not modify the source buffer while the inflator is using it.
+</Warning>
+
+## Error Behavior
+
+If you attempt to set a source buffer after the final input flag has been set, the function will:
+1. Set the error code to `INFLT_EINCORRECTUSE`
+2. Set the internal state to `0xDEADBEEF` (indicating incorrect usage)
+3. Return without setting the buffer
+
+## See Also
+
+- [inflator_settgt()](/api/inflator/inflator-settgt) - Set the target buffer
+- [inflator_inflate()](/api/inflator/inflator-inflate) - Perform inflation
+- [Inflator Overview](/api/inflator/overview) - Complete workflow

@@ -1,0 +1,258 @@
+---
+title: ZStrm Types & Constants
+description: Type definitions and constants for the high-level ZStrm compression/decompression interface
+---
+
+## TZStrm
+
+The main stream state structure providing a high-level interface for compression and decompression with support for zlib and gzip formats.
+
+```c
+struct TZStrm {
+    uint32 state;
+    uint32 error;
+    uint32 flags;
+    uint32 smode;  /* eZSTRMMode */
+    uint32 stype;  /* eZSTRMType */
+    int32  level;
+    
+    uintxx total;
+    
+    uint32 dictid;
+    uint32 dict;
+    
+    uint32 crc;
+    uint32 adler;
+    
+    uintxx usedinput;
+};
+```
+
+### Fields
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `state` | `uint32` | Current stream state (see eZSTRMState) |
+| `error` | `uint32` | Current error code (see eZSTRMError) |
+| `flags` | `uint32` | Configuration flags (see eZSTRMFlags) |
+| `smode` | `uint32` | Stream mode: inflate or deflate (see eZSTRMMode) |
+| `stype` | `uint32` | Stream type: raw, zlib, or gzip (see eZSTRMType) |
+| `level` | `int32` | Compression level (deflate mode only) |
+| `total` | `uintxx` | Total number of bytes processed |
+| `dictid` | `uint32` | Dictionary ID (Adler32 checksum) |
+| `dict` | `uint32` | Dictionary status flag |
+| `crc` | `uint32` | CRC32 checksum (for gzip format) |
+| `adler` | `uint32` | Adler32 checksum (for zlib format) |
+| `usedinput` | `uintxx` | Number of bytes consumed from source |
+
+<Note>
+The `usedinput` field may not reflect the actual number of bytes read when using a source callback, but it can be used to determine how much valid data has been processed.
+</Note>
+
+## eZSTRMMode
+
+Stream operation mode determining whether the stream performs compression or decompression.
+
+```c
+typedef enum {
+    ZSTRM_INFLATE = 0x00010000,
+    ZSTRM_DEFLATE = 0x00020000
+} eZSTRMMode;
+```
+
+### Values
+
+| Value | Description |
+|-------|-------------|
+| `ZSTRM_INFLATE` | Decompression mode |
+| `ZSTRM_DEFLATE` | Compression mode |
+
+## eZSTRMType
+
+Stream format type specifying the container format for the compressed data.
+
+```c
+typedef enum {
+    ZSTRM_DFLT = 0x00100000,
+    ZSTRM_ZLIB = 0x00200000,
+    ZSTRM_GZIP = 0x00400000
+} eZSTRMType;
+```
+
+### Values
+
+| Value | Description |
+|-------|-------------|
+| `ZSTRM_DFLT` | Raw DEFLATE format (no header or checksum) |
+| `ZSTRM_ZLIB` | zlib format (2-byte header + Adler32 checksum) |
+| `ZSTRM_GZIP` | gzip format (10-byte header + CRC32 checksum) |
+
+### Format Details
+
+- **Raw DEFLATE**: Pure compressed data with no wrapper. Useful when you handle headers and checksums externally.
+- **zlib**: Adds a 2-byte header and 4-byte Adler32 checksum trailer. Compatible with zlib library.
+- **gzip**: Adds a 10-byte header with metadata and 8-byte trailer (CRC32 + size). Compatible with gzip utility.
+
+## eZSTRMFlags
+
+Configuration flags that modify stream behavior, particularly for checksum handling.
+
+```c
+typedef enum {
+    ZSTRM_DOCRC   = 0x01000000,
+    ZSTRM_DOADLER = 0x02000000,
+    ZSTRM_NOCRC   = 0x04000000,
+    ZSTRM_NOADLER = 0x08000000
+} eZSTRMFlags;
+```
+
+### Values
+
+| Value | Description |
+|-------|-------------|
+| `ZSTRM_DOCRC` | Force CRC32 checksum even for formats that don't require it |
+| `ZSTRM_DOADLER` | Force Adler32 checksum even for formats that don't require it |
+| `ZSTRM_NOCRC` | Ignore CRC32 checksum verification (inflate mode only) |
+| `ZSTRM_NOADLER` | Ignore Adler32 checksum verification (inflate mode only) |
+
+<Note>
+The `ZSTRM_NOCRC` and `ZSTRM_NOADLER` flags only apply to inflate mode. Use these flags when you want to skip checksum verification for performance or when checksums are verified externally.
+</Note>
+
+## eZSTRMError
+
+Error codes indicating specific failure conditions during stream operations.
+
+```c
+typedef enum {
+    ZSTRM_OK            =  0,
+    ZSTRM_EIOERROR      =  1,
+    ZSTRM_EOOM          =  2,
+    ZSTRM_EBADDATA      =  3,
+    ZSTRM_ECHECKSUM     =  4,
+    ZSTRM_EFORMAT       =  5,
+    ZSTRM_EMISSINGDICT  =  6,
+    ZSTRM_ESRCEXHSTD    =  7,
+    ZSTRM_ETGTEXHSTD    =  8,
+    ZSTRM_EDEFLATE      =  9,
+    ZSTRM_EBADDICT      = 10,
+    ZSTRM_ELIMIT        = 11,
+    ZSTRM_EINCORRECTUSE = 12
+} eZSTRMError;
+```
+
+### Values
+
+| Value | Description |
+|-------|-------------|
+| `ZSTRM_OK` | No error, operation successful |
+| `ZSTRM_EIOERROR` | I/O error in callback function |
+| `ZSTRM_EOOM` | Out of memory error |
+| `ZSTRM_EBADDATA` | Invalid or corrupted compressed data |
+| `ZSTRM_ECHECKSUM` | Checksum mismatch detected |
+| `ZSTRM_EFORMAT` | Invalid format or header |
+| `ZSTRM_EMISSINGDICT` | Required dictionary not provided |
+| `ZSTRM_ESRCEXHSTD` | Source buffer exhausted |
+| `ZSTRM_ETGTEXHSTD` | Target buffer exhausted |
+| `ZSTRM_EDEFLATE` | Deflate operation error |
+| `ZSTRM_EBADDICT` | Invalid dictionary |
+| `ZSTRM_ELIMIT` | Size limit exceeded |
+| `ZSTRM_EINCORRECTUSE` | API used incorrectly |
+
+## eZSTRMState
+
+Stream state values indicating the current operational state of the stream.
+
+```c
+typedef enum {
+    ZSTRM_NOTSET   = 0,
+    ZSTRM_READY    = 1,
+    ZSTRM_NEEDDICT = 2,
+    ZSTRM_NORMAL   = 3,
+    ZSTRM_END      = 4
+} eZSTRMState;
+```
+
+### Values
+
+| Value | Description |
+|-------|-------------|
+| `ZSTRM_NOTSET` | Stream not initialized |
+| `ZSTRM_READY` | Stream initialized and ready for operation |
+| `ZSTRM_NEEDDICT` | Dictionary required to continue decompression |
+| `ZSTRM_NORMAL` | Stream operating normally |
+| `ZSTRM_END` | Stream has reached end of data |
+
+### State Transitions
+
+```
+NOTSET → READY → NORMAL → END
+           ↓
+        NEEDDICT → NORMAL
+```
+
+When the stream enters `ZSTRM_NEEDDICT` state during decompression, you must call `zstrm_setdctn()` with the appropriate dictionary before continuing.
+
+## TZStrmIFn
+
+Input callback function type for providing compressed or uncompressed data to the stream.
+
+```c
+typedef intxx (*TZStrmIFn)(uint8* buffer, uintxx size, void* user);
+```
+
+### Parameters
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `buffer` | `uint8*` | Buffer to fill with input data |
+| `size` | `uintxx` | Maximum number of bytes to read |
+| `user` | `void*` | User-provided context pointer |
+
+### Return Value
+
+- Number of bytes read into the buffer
+- `0` if no more input is available
+- `-1` if an error occurred
+
+<Note>
+The callback should fill the buffer with up to `size` bytes and return the actual number of bytes read. Returning 0 indicates end of input, not an error.
+</Note>
+
+## TZStrmOFn
+
+Output callback function type for receiving compressed or uncompressed data from the stream.
+
+```c
+typedef intxx (*TZStrmOFn)(const uint8* buffer, uintxx size, void* user);
+```
+
+### Parameters
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `buffer` | `const uint8*` | Buffer containing output data |
+| `size` | `uintxx` | Number of bytes in the buffer |
+| `user` | `void*` | User-provided context pointer |
+
+### Return Value
+
+- Number of bytes successfully written
+- `-1` if an error occurred
+
+### Example
+
+```c
+static intxx output_callback(const uint8* buffer, uintxx size, void* user) {
+    FILE* file = (FILE*)user;
+    size_t written = fwrite(buffer, 1, size, file);
+    if (written != size) {
+        return -1;  // Error
+    }
+    return written;
+}
+
+// Set the callback
+FILE* output = fopen("output.gz", "wb");
+zstrm_settargetfn(stream, output_callback, output);
+```

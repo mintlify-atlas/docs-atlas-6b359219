@@ -1,0 +1,210 @@
+---
+title: "inflator_setdctnr"
+description: "Set the preset dictionary for DEFLATE decompression"
+---
+
+## Function Signature
+
+```c
+void inflator_setdctnr(TInflator* state, const uint8* dict, uintxx size);
+```
+
+Sets the preset dictionary for the inflator. Some DEFLATE streams are compressed with a preset dictionary, which must be provided to the inflator before decompression can succeed.
+
+## Parameters
+
+<ParamField path="state" type="TInflator*">
+  Pointer to the inflator instance. Must not be `NULL`.
+</ParamField>
+
+<ParamField path="dict" type="const uint8*">
+  Pointer to the dictionary data. Must not be `NULL`.
+  
+  This should be the exact same dictionary that was used during compression. The dictionary is used to initialize the inflator's sliding window.
+</ParamField>
+
+<ParamField path="size" type="uintxx">
+  Size of the dictionary in bytes.
+  
+  DEFLATE dictionaries are typically up to 32KB in size, matching the maximum window size.
+</ParamField>
+
+## Return Value
+
+This function does not return a value.
+
+## Usage Example
+
+```c
+#include <jdeflate/inflator.h>
+
+// Example dictionary (in practice, this would be predetermined)
+const uint8 preset_dict[] = "Common phrases and patterns...";
+const uintxx dict_size = sizeof(preset_dict) - 1;
+
+int decompress_with_dictionary(const uint8* compressed, uintxx comp_size,
+                               uint8* output, uintxx out_size)
+{
+    TInflator* inflator = inflator_create(0, NULL);
+    if (!inflator) {
+        return -1;
+    }
+
+    // Set the dictionary before starting decompression
+    inflator_setdctnr(inflator, preset_dict, dict_size);
+
+    // Now decompress as usual
+    inflator_setsrc(inflator, compressed, comp_size);
+    inflator_settgt(inflator, output, out_size);
+    
+    eINFLTResult result = inflator_inflate(inflator, 1);
+
+    if (result != INFLT_OK) {
+        fprintf(stderr, "Decompression failed: %d\n", result);
+        if (result == INFLT_ERROR) {
+            fprintf(stderr, "Error code: %u\n", inflator->error);
+        }
+        inflator_destroy(inflator);
+        return -1;
+    }
+
+    uintxx bytes_written = inflator_tgtend(inflator);
+    inflator_destroy(inflator);
+    
+    return bytes_written;
+}
+```
+
+## Complete Workflow Example
+
+```c
+#include <jdeflate/inflator.h>
+#include <stdio.h>
+#include <string.h>
+
+#define DICT_SIZE 32768
+#define CHUNK_SIZE 16384
+
+// Decompress a stream that uses a preset dictionary
+int decompress_stream_with_dict(FILE* dict_file, FILE* input, FILE* output)
+{
+    TInflator* inflator = NULL;
+    uint8* dictionary = NULL;
+    uint8 in_buf[CHUNK_SIZE];
+    uint8 out_buf[CHUNK_SIZE];
+    int ret = -1;
+
+    // Load dictionary
+    dictionary = malloc(DICT_SIZE);
+    size_t dict_bytes = fread(dictionary, 1, DICT_SIZE, dict_file);
+    if (dict_bytes == 0) {
+        fprintf(stderr, "Failed to read dictionary\n");
+        goto cleanup;
+    }
+
+    // Create inflator and set dictionary
+    inflator = inflator_create(0, NULL);
+    if (!inflator) {
+        fprintf(stderr, "Failed to create inflator\n");
+        goto cleanup;
+    }
+
+    inflator_setdctnr(inflator, dictionary, dict_bytes);
+
+    // Decompress the stream
+    eINFLTResult result;
+    int final = 0;
+
+    do {
+        size_t bytes_read = fread(in_buf, 1, CHUNK_SIZE, input);
+        if (bytes_read == 0) break;
+        
+        if (bytes_read < CHUNK_SIZE || feof(input)) {
+            final = 1;
+        }
+
+        inflator_setsrc(inflator, in_buf, bytes_read);
+
+        do {
+            inflator_settgt(inflator, out_buf, CHUNK_SIZE);
+            result = inflator_inflate(inflator, final);
+
+            uintxx written = inflator_tgtend(inflator);
+            fwrite(out_buf, 1, written, output);
+
+        } while (result == INFLT_TGTEXHSTD);
+
+        if (result == INFLT_ERROR) {
+            fprintf(stderr, "Inflation error: %u\n", inflator->error);
+            goto cleanup;
+        }
+
+    } while (result == INFLT_SRCEXHSTD);
+
+    if (result == INFLT_OK) {
+        ret = 0;  // Success
+    }
+
+cleanup:
+    if (inflator) inflator_destroy(inflator);
+    if (dictionary) free(dictionary);
+    return ret;
+}
+```
+
+## Reusing Inflator with Different Dictionaries
+
+```c
+#include <jdeflate/inflator.h>
+
+// Decompress multiple files with different dictionaries
+int decompress_multiple(const uint8* dict1, uintxx dict1_size,
+                       const uint8* dict2, uintxx dict2_size)
+{
+    TInflator* inflator = inflator_create(0, NULL);
+    
+    // First file with first dictionary
+    inflator_setdctnr(inflator, dict1, dict1_size);
+    // ... decompress first file ...
+    
+    // Reset and use second dictionary
+    inflator_reset(inflator);
+    inflator_setdctnr(inflator, dict2, dict2_size);
+    // ... decompress second file ...
+    
+    inflator_destroy(inflator);
+    return 0;
+}
+```
+
+## Notes
+
+<Note>
+- The dictionary must be set **before** calling `inflator_inflate()` for the first time.
+- The dictionary data must match exactly what was used during compression.
+- Not all DEFLATE streams use dictionaries. Only set a dictionary if you know the stream was compressed with one.
+- The dictionary buffer must remain valid until decompression is complete or a new dictionary is set.
+- Dictionaries are commonly used in scenarios where multiple similar documents are compressed (e.g., HTTP/2, protocol buffers).
+</Note>
+
+<Warning>
+- Using the wrong dictionary will result in decompression errors or corrupted output.
+- The dictionary must be the exact same bytes that were used during compression.
+- Do not confuse the preset dictionary with the sliding window (LZ77 window) used internally by DEFLATE.
+</Warning>
+
+## When to Use Dictionaries
+
+Preset dictionaries are beneficial when:
+
+1. **Compressing similar data**: Multiple files with common patterns
+2. **Small payloads**: Dictionary provides context that improves compression
+3. **Protocol communication**: Shared dictionary between client and server
+4. **HTTP/2 header compression**: Uses HPACK with predefined dictionaries
+
+## See Also
+
+- [inflator_create()](/api/inflator/inflator-create) - Create an inflator instance
+- [inflator_reset()](/api/inflator/inflator-reset) - Reset inflator to reuse with a different stream
+- [inflator_inflate()](/api/inflator/inflator-inflate) - Perform inflation
+- [Inflator Overview](/api/inflator/overview) - Complete workflow

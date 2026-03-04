@@ -1,0 +1,276 @@
+---
+title: 'zstrm_setdctn'
+description: 'Set a custom dictionary for compression or decompression'
+---
+
+## Function Signature
+
+```c
+void zstrm_setdctn(const TZStrm* zstrm, const uint8* dict, uintxx size);
+```
+
+Sets a custom dictionary for the compression or decompression process. Dictionaries can improve compression ratios when compressing similar data or are required when decompressing data that was compressed with a dictionary.
+
+## Parameters
+
+<ParamField path="zstrm" type="const TZStrm*" required>
+  Pointer to a stream (either `ZSTRM_DEFLATE` or `ZSTRM_INFLATE` mode).
+</ParamField>
+
+<ParamField path="dict" type="const uint8*" required>
+  Pointer to the dictionary data.
+</ParamField>
+
+<ParamField path="size" type="uintxx" required>
+  Size of the dictionary in bytes. Maximum dictionary size is typically 32KB (32768 bytes).
+</ParamField>
+
+## Return Value
+
+This function does not return a value. Check `zstrm->error` after calling to detect errors.
+
+## Examples
+
+### Using Dictionary for Compression
+
+```c
+const TZStrm* zstrm;
+const char* dictionary = "common words: the and or but to from with";
+uintxx dict_size = strlen(dictionary);
+const char* data = "the quick brown fox jumps to the tree";
+
+/* Create compressor with dictionary */
+zstrm = zstrm_create(ZSTRM_DEFLATE | ZSTRM_ZLIB, 9, NULL);
+zstrm_settargetfn(zstrm, output_callback, userdata);
+
+/* Set dictionary before compression */
+zstrm_setdctn(zstrm, (const uint8*)dictionary, dict_size);
+
+if (zstrm->error) {
+    fprintf(stderr, "Failed to set dictionary: %u\n", zstrm->error);
+    zstrm_destroy(zstrm);
+    return -1;
+}
+
+/* The dictionary ID is now available in zstrm->dictid */
+printf("Dictionary ID: 0x%08X\n", zstrm->dictid);
+
+/* Compress data */
+zstrm_deflate(zstrm, data, strlen(data));
+zstrm_flush(zstrm, 1);
+
+zstrm_destroy(zstrm);
+```
+
+### Decompression with Dictionary
+
+```c
+const TZStrm* zstrm;
+uint8* compressed_data;
+uintxx compressed_size;
+uint8 output_buffer[4096];
+const char* dictionary = "common words: the and or but to from with";
+
+/* Create decompressor */
+zstrm = zstrm_create(ZSTRM_INFLATE | ZSTRM_ZLIB, 0, NULL);
+zstrm_setsource(zstrm, compressed_data, compressed_size);
+
+/* Try to decompress */
+uintxx decompressed = zstrm_inflate(zstrm, output_buffer, sizeof(output_buffer));
+
+/* Check if dictionary is required */
+if (zstrm->state == ZSTRM_NEEDDICT) {
+    printf("Dictionary required. ID: 0x%08X\n", zstrm->dictid);
+    
+    /* Set the dictionary (must match the one used for compression) */
+    zstrm_setdctn(zstrm, (const uint8*)dictionary, strlen(dictionary));
+    
+    if (zstrm->error) {
+        fprintf(stderr, "Dictionary error: %u\n", zstrm->error);
+        zstrm_destroy(zstrm);
+        return -1;
+    }
+    
+    /* Retry decompression */
+    decompressed = zstrm_inflate(zstrm, output_buffer, sizeof(output_buffer));
+}
+
+if (zstrm->error) {
+    fprintf(stderr, "Decompression error: %u\n", zstrm->error);
+} else {
+    printf("Decompressed %llu bytes\n", (unsigned long long)decompressed);
+}
+
+zstrm_destroy(zstrm);
+```
+
+### Dictionary Management System
+
+```c
+#define MAX_DICT_SIZE 32768
+
+typedef struct {
+    uint32 id;
+    uint8 data[MAX_DICT_SIZE];
+    uintxx size;
+} Dictionary;
+
+Dictionary dictionaries[10];  /* Dictionary repository */
+int dict_count = 0;
+
+/* Load dictionary by ID */
+int load_dictionary(uint32 dict_id, uint8* buffer, uintxx* size) {
+    for (int i = 0; i < dict_count; i++) {
+        if (dictionaries[i].id == dict_id) {
+            memcpy(buffer, dictionaries[i].data, dictionaries[i].size);
+            *size = dictionaries[i].size;
+            return 0;
+        }
+    }
+    return -1;  /* Dictionary not found */
+}
+
+/* Decompress with automatic dictionary loading */
+int decompress_with_auto_dict(const uint8* compressed, uintxx comp_size,
+                              uint8* output, uintxx output_size) {
+    const TZStrm* zstrm;
+    uint8 dict_buffer[MAX_DICT_SIZE];
+    uintxx dict_size;
+    
+    zstrm = zstrm_create(ZSTRM_INFLATE | ZSTRM_ZLIB, 0, NULL);
+    zstrm_setsource(zstrm, compressed, comp_size);
+    
+    uintxx decompressed = zstrm_inflate(zstrm, output, output_size);
+    
+    /* Handle dictionary requirement */
+    if (zstrm->state == ZSTRM_NEEDDICT) {
+        if (load_dictionary(zstrm->dictid, dict_buffer, &dict_size) != 0) {
+            fprintf(stderr, "Dictionary 0x%08X not found\n", zstrm->dictid);
+            zstrm_destroy(zstrm);
+            return -1;
+        }
+        
+        zstrm_setdctn(zstrm, dict_buffer, dict_size);
+        decompressed = zstrm_inflate(zstrm, output, output_size);
+    }
+    
+    int result = zstrm->error ? -1 : (int)decompressed;
+    zstrm_destroy(zstrm);
+    return result;
+}
+```
+
+### Training and Using Custom Dictionary
+
+```c
+/* Create a dictionary from sample data */
+void create_dictionary_from_samples(const char** samples, int count,
+                                   uint8* dict, uintxx* dict_size) {
+    uintxx offset = 0;
+    const uintxx MAX_SIZE = 32768;
+    
+    for (int i = 0; i < count && offset < MAX_SIZE; i++) {
+        uintxx len = strlen(samples[i]);
+        uintxx to_copy = (offset + len < MAX_SIZE) ? len : (MAX_SIZE - offset);
+        
+        memcpy(dict + offset, samples[i], to_copy);
+        offset += to_copy;
+    }
+    
+    *dict_size = offset;
+}
+
+/* Usage */
+const char* training_samples[] = {
+    "GET /api/users HTTP/1.1\r\nHost: example.com\r\n",
+    "POST /api/data HTTP/1.1\r\nHost: example.com\r\n",
+    "Content-Type: application/json\r\n"
+};
+
+uint8 custom_dict[32768];
+uintxx dict_size;
+
+create_dictionary_from_samples(training_samples, 3, custom_dict, &dict_size);
+
+/* Compress with custom dictionary */
+const TZStrm* zstrm = zstrm_create(ZSTRM_DEFLATE | ZSTRM_ZLIB, 9, NULL);
+zstrm_settargetfn(zstrm, output_callback, userdata);
+zstrm_setdctn(zstrm, custom_dict, dict_size);
+
+/* Store the dictionary ID for later decompression */
+uint32 saved_dict_id = zstrm->dictid;
+
+zstrm_deflate(zstrm, data, data_size);
+zstrm_flush(zstrm, 1);
+zstrm_destroy(zstrm);
+```
+
+## Notes
+
+<Note>
+  When compressing with a dictionary, the dictionary ID (Adler32 checksum of the dictionary) is stored in `zstrm->dictid`. You must save this ID along with the compressed data so you can provide the correct dictionary during decompression.
+</Note>
+
+<Note>
+  For decompression, you must use the exact same dictionary that was used during compression. The dictionary ID in `zstrm->dictid` can be used to verify you're using the correct dictionary.
+</Note>
+
+<Warning>
+  Dictionaries are only supported for zlib format (`ZSTRM_ZLIB`). Using dictionaries with raw DEFLATE or gzip format may not work as expected.
+</Warning>
+
+<Note>
+  The recommended maximum dictionary size is 32KB (32768 bytes). Larger dictionaries may not provide additional benefits and could increase memory usage.
+</Note>
+
+<Note>
+  When decompressing, if the stream state becomes `ZSTRM_NEEDDICT`, you must call `zstrm_setdctn()` with the correct dictionary before continuing decompression.
+</Note>
+
+## Dictionary Best Practices
+
+### Creating Effective Dictionaries
+
+1. **Use representative data**: Include common patterns and strings from your actual data
+2. **Keep it reasonable**: 8-32KB is typically sufficient
+3. **Include frequent sequences**: Put the most common patterns at the end of the dictionary
+4. **Update periodically**: Retrain dictionaries as your data patterns change
+
+### When to Use Dictionaries
+
+- Compressing many small files with similar content (e.g., JSON API responses)
+- Protocol messages with common headers
+- Log files with repeated patterns
+- Configuration files with similar structure
+
+### When NOT to Use Dictionaries
+
+- Large files (diminishing returns)
+- Highly diverse data with no common patterns
+- When simplicity is more important than compression ratio
+
+## Error Handling
+
+```c
+zstrm_setdctn(zstrm, dictionary, dict_size);
+if (zstrm->error != ZSTRM_OK) {
+    switch (zstrm->error) {
+        case ZSTRM_EBADDICT:
+            fprintf(stderr, "Invalid dictionary\n");
+            break;
+        case ZSTRM_EINCORRECTUSE:
+            fprintf(stderr, "Dictionary used incorrectly\n");
+            break;
+        default:
+            fprintf(stderr, "Error: %u\n", zstrm->error);
+            break;
+    }
+}
+```
+
+## See Also
+
+- [zstrm_create](/api/zstrm/zstrm-create) - Create a stream
+- [zstrm_deflate](/api/zstrm/zstrm-deflate) - Compress data
+- [zstrm_inflate](/api/zstrm/zstrm-inflate) - Decompress data
+- [zstrm_adler32update](/api/zstrm/checksums) - Calculate dictionary ID

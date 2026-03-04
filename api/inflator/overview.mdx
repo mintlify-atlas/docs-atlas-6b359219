@@ -1,0 +1,159 @@
+---
+title: "Inflator API Overview"
+description: "Stream-oriented deflate decoder for decompressing DEFLATE data"
+---
+
+## Introduction
+
+The Inflator API provides a stream-oriented deflate decoder for decompressing DEFLATE-compressed data. It allows you to decompress data in chunks, making it suitable for streaming applications and large files.
+
+## TInflator Structure
+
+The `TInflator` struct represents the state of an inflator instance:
+
+```c
+struct TInflator {
+    /* state */
+    const uint32 state;
+    const uint32 error;
+    const uint32 flags;
+    const uint32 finalinput;
+
+    /* last result from inflate call */
+    const uint32 status;
+
+    /* stream buffers */
+    const uint8* source;
+    const uint8* sbgn;
+    const uint8* send;
+
+    uint8* target;
+    uint8* tbgn;
+    uint8* tend;
+};
+```
+
+<Note>
+All fields in the `TInflator` struct are read-only from the user's perspective. The inflator functions manage the internal state.
+</Note>
+
+## Typical Workflow
+
+The typical usage pattern for the Inflator API follows this sequence:
+
+```c
+// 1. Create an inflator instance
+TInflator* inflator = inflator_create(0, NULL);
+
+// 2. Process compressed data in chunks
+int final = 0;
+eINFLTResult result;
+
+do {
+    if (...no more input)
+        final = 1;
+
+    // Read a chunk of compressed data into source buffer
+    inflator_setsrc(inflator, source, sourcesize);
+    
+    do {
+        inflator_settgt(inflator, target, targetsize);
+        result = inflator_inflate(inflator, final);
+
+        // Process decompressed data from target to inflator_tgtend(inflator)
+        uintxx decompressed_bytes = inflator_tgtend(inflator);
+        // ...use the decompressed data
+        
+    } while (result == INFLT_TGTEXHSTD);
+    
+} while (result == INFLT_SRCEXHSTD);
+
+// 3. Check for errors
+if (result == INFLT_ERROR) {
+    // Handle error using inflator->error
+}
+
+// 4. Destroy the inflator instance
+inflator_destroy(inflator);
+```
+
+## Result Codes
+
+The `eINFLTResult` enum defines the possible return values from `inflator_inflate()`:
+
+<ResponseField name="INFLT_OK" type="0">
+  Inflation completed successfully. All input has been processed and the stream is complete.
+</ResponseField>
+
+<ResponseField name="INFLT_SRCEXHSTD" type="1">
+  Source buffer exhausted. More input data is needed. Set a new source buffer and continue.
+</ResponseField>
+
+<ResponseField name="INFLT_TGTEXHSTD" type="2">
+  Target buffer exhausted. The output buffer is full. Set a new target buffer and continue.
+</ResponseField>
+
+<ResponseField name="INFLT_ERROR" type="3">
+  An error occurred during inflation. Check the `error` field in the TInflator struct for details.
+</ResponseField>
+
+## Error Codes
+
+The `eINFLTError` enum defines specific error conditions:
+
+<ResponseField name="INFLT_EBADSTATE" type="1">
+  Invalid state encountered during inflation.
+</ResponseField>
+
+<ResponseField name="INFLT_EBADCODE" type="2">
+  Invalid Huffman code in compressed data.
+</ResponseField>
+
+<ResponseField name="INFLT_EBADTREE" type="3">
+  Invalid Huffman tree in compressed data.
+</ResponseField>
+
+<ResponseField name="INFLT_EFAROFFSET" type="4">
+  Distance offset is too far back (invalid reference).
+</ResponseField>
+
+<ResponseField name="INFLT_EBADBLOCK" type="5">
+  Invalid block structure in compressed data.
+</ResponseField>
+
+<ResponseField name="INFLT_EINPUTEND" type="6">
+  Unexpected end of input data.
+</ResponseField>
+
+<ResponseField name="INFLT_EOOM" type="7">
+  Out of memory error.
+</ResponseField>
+
+<ResponseField name="INFLT_EINCORRECTUSE" type="8">
+  Incorrect usage of the API (e.g., setting source after final flag was set).
+</ResponseField>
+
+## API Functions
+
+The Inflator API provides the following functions:
+
+- [inflator_create()](/api/inflator/inflator-create) - Create an inflator instance
+- [inflator_destroy()](/api/inflator/inflator-destroy) - Destroy an inflator instance
+- [inflator_inflate()](/api/inflator/inflator-inflate) - Perform inflation
+- [inflator_setsrc()](/api/inflator/inflator-setsrc) - Set the source buffer
+- [inflator_settgt()](/api/inflator/inflator-settgt) - Set the target buffer
+- [inflator_setdctnr()](/api/inflator/inflator-setdctnr) - Set the dictionary
+- [inflator_reset()](/api/inflator/inflator-reset) - Reset the inflator state
+
+## Best Practices
+
+<Note>
+- Always check the return value of `inflator_inflate()` to handle all result codes appropriately
+- Use reasonable buffer sizes (e.g., 32KB-64KB) for efficient processing
+- Always destroy the inflator instance when done to free resources
+</Note>
+
+<Warning>
+- Do not call `inflator_setsrc()` after setting the final flag to 1. This will result in `INFLT_EINCORRECTUSE` error.
+- All fields in the `TInflator` struct are read-only. Do not modify them directly.
+</Warning>

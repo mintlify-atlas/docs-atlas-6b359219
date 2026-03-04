@@ -1,0 +1,272 @@
+---
+title: "Simplified Buffer Mode"
+description: "Learn how to use Jdeflate's single-buffer mode for simple compression and decompression tasks"
+---
+
+For simple operations where all data fits in memory, Jdeflate provides a simplified buffer mode that eliminates the need for nested loops.
+
+## When to Use Buffer Mode
+
+Buffer mode is ideal when:
+- You have the entire data in memory
+- The compressed/decompressed output fits in a single buffer
+- You don't need streaming for large files
+- You want the simplest possible API
+
+<Note>
+  For large files or streaming data, use the [streaming compression](/guides/compression) and [decompression](/guides/decompression) workflows instead.
+</Note>
+
+## Single-Buffer Compression
+
+Compress data directly into a buffer without loops:
+
+```c
+deflator_setsrc(deflator, source, sourcesize);
+deflator_settgt(deflator, target, targetsize);
+if (deflator_deflate(deflator, 1) != DEFLT_OK) {
+    /* ... handle the error */
+}
+```
+
+### Complete Compression Example
+
+<Steps>
+  <Step title="Create the deflator">
+    ```c
+    #include <jdeflate/deflator.h>
+
+    TDeflator* deflator = deflator_create(0, 6, NULL);
+    if (deflator == NULL) {
+        /* handle error */
+        return -1;
+    }
+    ```
+  </Step>
+
+  <Step title="Prepare your buffers">
+    ```c
+    unsigned char source[1024] = "Data to compress...";
+    unsigned char target[2048];  /* Make sure target is large enough */
+    size_t sourcesize = strlen((char*)source);
+    size_t targetsize = sizeof(target);
+    ```
+
+    <Warning>
+      Ensure the target buffer is large enough to hold the compressed data. In the worst case, compressed data can be slightly larger than the input.
+    </Warning>
+  </Step>
+
+  <Step title="Compress in one call">
+    ```c
+    deflator_setsrc(deflator, source, sourcesize);
+    deflator_settgt(deflator, target, targetsize);
+    
+    if (deflator_deflate(deflator, 1) != DEFLT_OK) {
+        /* Compression failed */
+        deflator_destroy(deflator);
+        return -1;
+    }
+    
+    /* Get the compressed size */
+    size_t compressed_size = deflator_tgtend(deflator);
+    ```
+
+    <Note>
+      The `1` parameter indicates this is the final (and only) chunk of data.
+    </Note>
+  </Step>
+
+  <Step title="Clean up">
+    ```c
+    deflator_destroy(deflator);
+    ```
+  </Step>
+</Steps>
+
+## Single-Buffer Decompression
+
+Decompress data directly into a buffer without loops:
+
+```c
+inflator_setsrc(inflator, source, sourcesize);
+inflator_settgt(inflator, target, targetsize);
+if (inflator_inflate(inflator, 1) != INFLT_OK) {
+    /* ... handle the error */
+}
+```
+
+### Complete Decompression Example
+
+<Steps>
+  <Step title="Create the inflator">
+    ```c
+    #include <jdeflate/inflator.h>
+
+    TInflator* inflator = inflator_create(0, NULL);
+    if (inflator == NULL) {
+        /* handle error */
+        return -1;
+    }
+    ```
+  </Step>
+
+  <Step title="Prepare your buffers">
+    ```c
+    unsigned char source[2048];  /* Compressed data */
+    unsigned char target[4096];  /* Output buffer */
+    size_t sourcesize = /* size of compressed data */;
+    size_t targetsize = sizeof(target);
+    ```
+
+    <Warning>
+      The target buffer must be large enough to hold the entire decompressed output, or `inflator_inflate()` will return `INFLT_TGTEXHSTD`.
+    </Warning>
+  </Step>
+
+  <Step title="Decompress in one call">
+    ```c
+    inflator_setsrc(inflator, source, sourcesize);
+    inflator_settgt(inflator, target, targetsize);
+    
+    if (inflator_inflate(inflator, 1) != INFLT_OK) {
+        /* Decompression failed */
+        fprintf(stderr, "Error: %u\n", inflator->error);
+        inflator_destroy(inflator);
+        return -1;
+    }
+    
+    /* Get the decompressed size */
+    size_t decompressed_size = inflator_tgtend(inflator);
+    ```
+  </Step>
+
+  <Step title="Clean up">
+    ```c
+    inflator_destroy(inflator);
+    ```
+  </Step>
+</Steps>
+
+## Handling Errors
+
+### Buffer Too Small
+
+If your target buffer is too small:
+
+```c
+unsigned int status = deflator_deflate(deflator, 1);
+
+if (status == DEFLT_TGTEXHSTD) {
+    /* Target buffer exhausted - need larger buffer */
+    fprintf(stderr, "Buffer too small for compressed data\n");
+} else if (status == DEFLT_OK) {
+    /* Success */
+    size_t bytes_written = deflator_tgtend(deflator);
+}
+```
+
+### Decompression Errors
+
+Check specific error codes when decompression fails:
+
+```c
+if (inflator_inflate(inflator, 1) != INFLT_OK) {
+    switch (inflator->error) {
+        case INFLT_EBADDATA:
+            fprintf(stderr, "Corrupted compressed data\n");
+            break;
+        case INFLT_EINPUTEND:
+            fprintf(stderr, "Unexpected end of input\n");
+            break;
+        case INFLT_EOOM:
+            fprintf(stderr, "Out of memory\n");
+            break;
+        default:
+            fprintf(stderr, "Decompression error: %u\n", inflator->error);
+    }
+}
+```
+
+## Complete Working Example
+
+Here's a complete example demonstrating both compression and decompression:
+
+```c
+#include <jdeflate/deflator.h>
+#include <jdeflate/inflator.h>
+#include <stdio.h>
+#include <string.h>
+
+int main(void) {
+    /* Original data */
+    const char* original = "Hello, Jdeflate! This is a test message.";
+    size_t original_size = strlen(original);
+    
+    /* Buffers */
+    unsigned char compressed[256];
+    unsigned char decompressed[256];
+    
+    /* Compress */
+    TDeflator* deflator = deflator_create(0, 6, NULL);
+    if (!deflator) return 1;
+    
+    deflator_setsrc(deflator, (const uint8_t*)original, original_size);
+    deflator_settgt(deflator, compressed, sizeof(compressed));
+    
+    if (deflator_deflate(deflator, 1) != DEFLT_OK) {
+        fprintf(stderr, "Compression failed\n");
+        deflator_destroy(deflator);
+        return 1;
+    }
+    
+    size_t compressed_size = deflator_tgtend(deflator);
+    printf("Compressed %zu bytes to %zu bytes\n", original_size, compressed_size);
+    deflator_destroy(deflator);
+    
+    /* Decompress */
+    TInflator* inflator = inflator_create(0, NULL);
+    if (!inflator) return 1;
+    
+    inflator_setsrc(inflator, compressed, compressed_size);
+    inflator_settgt(inflator, decompressed, sizeof(decompressed));
+    
+    if (inflator_inflate(inflator, 1) != INFLT_OK) {
+        fprintf(stderr, "Decompression failed\n");
+        inflator_destroy(inflator);
+        return 1;
+    }
+    
+    size_t decompressed_size = inflator_tgtend(inflator);
+    printf("Decompressed %zu bytes to %zu bytes\n", compressed_size, decompressed_size);
+    inflator_destroy(inflator);
+    
+    /* Verify */
+    if (decompressed_size == original_size && 
+        memcmp(original, decompressed, original_size) == 0) {
+        printf("Success! Data matches.\n");
+    }
+    
+    return 0;
+}
+```
+
+## Advantages and Limitations
+
+<Accordion title="Advantages">
+  - **Simplicity**: No nested loops, single function call
+  - **Speed**: Minimal overhead for small data
+  - **Ease of use**: Perfect for quick compression/decompression tasks
+  - **Readability**: Clear and straightforward code
+</Accordion>
+
+<Accordion title="Limitations">
+  - **Memory**: Requires entire data and output in memory
+  - **Size limits**: Not suitable for large files
+  - **Flexibility**: Can't process data incrementally
+  - **Buffer sizing**: Must estimate maximum output size
+</Accordion>
+
+<Note>
+  For more advanced use cases with format handling (zlib, gzip), see the [ZStrm Usage Guide](/guides/zstrm-usage).
+</Note>

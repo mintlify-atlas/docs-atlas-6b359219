@@ -1,0 +1,185 @@
+---
+title: 'deflator_deflate'
+description: 'Compress data using the deflator instance'
+---
+
+## Function Signature
+
+```c
+eDEFLTResult deflator_deflate(TDeflator*, eDEFLTFlush flush);
+```
+
+Compresses data from the source buffer to the target buffer. This is the main compression function that processes data incrementally.
+
+## Parameters
+
+<ParamField path="state" type="TDeflator*" required>
+  Pointer to the deflator instance. The source and target buffers must be set using [`deflator_setsrc()`](/api/deflator/deflator-setsrc) and [`deflator_settgt()`](/api/deflator/deflator-settgt) before calling this function.
+</ParamField>
+
+<ParamField path="flush" type="eDEFLTFlush" required>
+  Flush mode that controls how buffered data is handled:
+  
+  - `DEFLT_NOFLUSH` (0) - Normal compression, no flush
+  - `DEFLT_END` (1) - End of stream, flush all data and finalize
+  - `DEFLT_FLUSH` (2) - Flush buffered data (similar to Z_SYNC_FLUSH)
+</ParamField>
+
+## Return Value
+
+<ResponseField name="return" type="eDEFLTResult">
+  Returns one of the following status codes:
+</ResponseField>
+
+<ResponseField name="DEFLT_OK" type="0">
+  Success. All source data has been processed and flushed to the target.
+</ResponseField>
+
+<ResponseField name="DEFLT_SRCEXHSTD" type="1">
+  Source buffer exhausted. Set new source data with `deflator_setsrc()` and call again.
+</ResponseField>
+
+<ResponseField name="DEFLT_TGTEXHSTD" type="2">
+  Target buffer exhausted. Set a new target buffer with `deflator_settgt()` and call again.
+</ResponseField>
+
+<ResponseField name="DEFLT_ERROR" type="3">
+  An error occurred. Check the `error` field in the `TDeflator` struct for the error code.
+</ResponseField>
+
+## Flush Behavior
+
+<Warning>
+When flush is `DEFLT_FLUSH` or `DEFLT_END`, the deflator will flush as much data as possible to the target buffer. **Do not set new source data until the deflator returns `DEFLT_OK`.**
+</Warning>
+
+<Note>
+The deflator always appends a STORED block type at the end of the stream when flush is set, ensuring the stream is properly terminated. This is equivalent to ZLIB's Z_SYNC_FLUSH flag.
+</Note>
+
+## Usage Example
+
+### Basic Compression Loop
+
+```c
+#include <jdeflate/deflator.h>
+#include <stdio.h>
+
+#define SRC_SIZE 4096
+#define TGT_SIZE 4096
+
+int compress_data(TDeflator* deflator, FILE* in, FILE* out) {
+    uint8 source[SRC_SIZE];
+    uint8 target[TGT_SIZE];
+    eDEFLTResult result;
+    size_t bytes_read;
+    int final = 0;
+    
+    do {
+        // Read a chunk of data
+        bytes_read = fread(source, 1, SRC_SIZE, in);
+        if (bytes_read < SRC_SIZE) {
+            final = 1; // Last chunk
+        }
+        
+        // Set source buffer
+        deflator_setsrc(deflator, source, bytes_read);
+        
+        do {
+            // Set target buffer
+            deflator_settgt(deflator, target, TGT_SIZE);
+            
+            // Compress
+            result = deflator_deflate(deflator, final ? DEFLT_END : DEFLT_NOFLUSH);
+            
+            // Write compressed data
+            uintxx compressed_size = deflator_tgtend(deflator);
+            fwrite(target, 1, compressed_size, out);
+            
+        } while (result == DEFLT_TGTEXHSTD);
+        
+        if (result == DEFLT_ERROR) {
+            fprintf(stderr, "Compression error: %u\n", deflator->error);
+            return -1;
+        }
+        
+    } while (result == DEFLT_SRCEXHSTD);
+    
+    return 0;
+}
+```
+
+### Flushing Data
+
+```c
+// Flush buffered data without ending the stream
+eDEFLTResult result;
+do {
+    deflator_settgt(deflator, target, target_size);
+    result = deflator_deflate(deflator, DEFLT_FLUSH);
+    
+    // Write the flushed data
+    uintxx size = deflator_tgtend(deflator);
+    write_output(target, size);
+    
+} while (result == DEFLT_TGTEXHSTD);
+
+// Now safe to set new source data
+if (result == DEFLT_OK) {
+    deflator_setsrc(deflator, new_source, new_size);
+}
+```
+
+### Finalizing the Stream
+
+```c
+// Process final chunk
+deflator_setsrc(deflator, final_source, final_size);
+
+eDEFLTResult result;
+do {
+    deflator_settgt(deflator, target, target_size);
+    result = deflator_deflate(deflator, DEFLT_END);
+    
+    uintxx size = deflator_tgtend(deflator);
+    write_output(target, size);
+    
+} while (result == DEFLT_TGTEXHSTD);
+
+if (result == DEFLT_OK) {
+    // Compression complete
+} else if (result == DEFLT_ERROR) {
+    // Handle error
+    fprintf(stderr, "Error: %u\n", deflator->error);
+}
+```
+
+## Error Handling
+
+When `DEFLT_ERROR` is returned, check the `error` field:
+
+```c
+result = deflator_deflate(deflator, DEFLT_NOFLUSH);
+if (result == DEFLT_ERROR) {
+    switch (deflator->error) {
+        case DEFLT_EBADSTATE:
+            fprintf(stderr, "Bad state\n");
+            break;
+        case DEFLT_EOOM:
+            fprintf(stderr, "Out of memory\n");
+            break;
+        case DEFLT_EINCORRECTUSE:
+            fprintf(stderr, "Incorrect usage - did you set source during flush?\n");
+            break;
+        default:
+            fprintf(stderr, "Unknown error: %u\n", deflator->error);
+    }
+}
+```
+
+## Related Functions
+
+- [`deflator_setsrc()`](/api/deflator/deflator-setsrc) - Set source buffer before deflating
+- [`deflator_settgt()`](/api/deflator/deflator-settgt) - Set target buffer before deflating
+- [`deflator_srcend()`](deflator.h:124) - Get bytes processed from source
+- [`deflator_tgtend()`](deflator.h:129) - Get bytes written to target

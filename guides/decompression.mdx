@@ -1,0 +1,230 @@
+---
+title: "Decompression Guide"
+description: "Learn how to decompress data using Jdeflate's inflator with streaming support"
+---
+
+Jdeflate provides a stream-oriented decompression API through the `inflator` module. This guide covers the complete workflow for decompressing deflate-compressed data.
+
+## Including the Header
+
+First, include the inflator header in your project:
+
+```c
+#include <jdeflate/inflator.h>
+```
+
+For C++ projects:
+
+```cpp
+extern "C" {
+    #include <jdeflate/inflator.h>
+}
+```
+
+## Creating an Inflator Instance
+
+<Steps>
+  <Step title="Create the inflator">
+    Initialize an inflator instance:
+
+    ```c
+    TInflator* inflator;
+    /* flags, and memory allocator */
+    inflator = inflator_create(0, NULL);
+    if (inflator == NULL) {
+        /* ... handle the error */
+    }
+    ```
+  </Step>
+
+  <Step title="Understand the parameters">
+    - **flags**: Use `0` for default behavior
+    - **allocator**: Custom memory allocator or `NULL` for default
+
+    <Note>
+      Unlike the deflator, the inflator doesn't require a compression level since it automatically detects the format from the input data.
+    </Note>
+  </Step>
+</Steps>
+
+## Streaming Decompression Workflow
+
+The inflator uses a streaming approach with nested loops to handle large compressed data efficiently:
+
+```c
+unsigned int status;
+bool final;
+
+final = 0;
+do {
+    /* ...read or fetch some data into the source buffer */
+    inflator_setsrc(inflator, source, sourcesize);
+    if (/*...no more input*/) {
+        final = 1;
+    }
+
+    do {
+        inflator_settgt(inflator, target, targetsize);
+
+        status = inflator_inflate(inflator, final);
+        /* target buffer now contains the decompressed data */ 
+        /* and to get the number of bytes that have been written */
+        /* you can use inflator_tgtend(inflator) */
+    } while (status == INFLT_TGTEXHSTD);
+} while (status == INFLT_SRCEXHSTD);
+
+/* check for errors */
+if (status == INFLT_OK) {
+    /* ... decompression was successful */
+} else {
+    /* ... handle the error */
+}
+```
+
+### Understanding the Loop Pattern
+
+<Accordion title="Outer Loop - Source Data">
+  The outer loop handles reading compressed input data:
+  - Read chunks of compressed data into your source buffer
+  - Call `inflator_setsrc()` to set the source buffer
+  - Set `final = 1` when no more input is available
+  - Continue until `status != INFLT_SRCEXHSTD`
+</Accordion>
+
+<Accordion title="Inner Loop - Target Data">
+  The inner loop handles writing decompressed output:
+  - Set the target buffer with `inflator_settgt()`
+  - Call `inflator_inflate()` to decompress data
+  - Use `inflator_tgtend()` to get the number of bytes written
+  - Continue until `status != INFLT_TGTEXHSTD`
+</Accordion>
+
+## Return Codes
+
+The `inflator_inflate()` function returns one of these status codes:
+
+| Status | Description |
+|--------|-------------|
+| `INFLT_OK` | Decompression completed successfully |
+| `INFLT_SRCEXHSTD` | Source buffer exhausted, need more input |
+| `INFLT_TGTEXHSTD` | Target buffer exhausted, need more output space |
+| `INFLT_ERROR` | An error occurred |
+
+## Error Codes
+
+When `INFLT_ERROR` is returned, check the error code:
+
+| Error Code | Description |
+|------------|-------------|
+| `INFLT_EBADSTATE` | Invalid state |
+| `INFLT_EBADCODE` | Invalid Huffman code |
+| `INFLT_EBADTREE` | Invalid Huffman tree |
+| `INFLT_EFAROFFSET` | Invalid backward reference |
+| `INFLT_EBADBLOCK` | Invalid block type |
+| `INFLT_EINPUTEND` | Unexpected end of input |
+| `INFLT_EOOM` | Out of memory |
+| `INFLT_EINCORRECTUSE` | Incorrect API usage |
+
+## Getting Processed Byte Counts
+
+Use these functions to track progress:
+
+```c
+/* Get number of bytes read from source buffer */
+uintxx bytes_read = inflator_srcend(inflator);
+
+/* Get number of bytes written to target buffer */
+uintxx bytes_written = inflator_tgtend(inflator);
+```
+
+## Advanced Features
+
+### Using a Dictionary
+
+If the compressed data was created with a dictionary, you must provide the same dictionary:
+
+```c
+inflator_setdctnr(inflator, dict, dictsize);
+```
+
+<Warning>
+  The dictionary must be the exact same one used during compression, or decompression will fail.
+</Warning>
+
+### Resetting the Inflator
+
+To reuse the inflator instance for a new stream:
+
+```c
+inflator_reset(inflator);
+```
+
+## Cleaning Up
+
+Always destroy the inflator when finished:
+
+```c
+inflator_destroy(inflator);
+```
+
+## Complete Example
+
+Here's a complete example decompressing a file:
+
+```c
+#include <jdeflate/inflator.h>
+#include <stdio.h>
+
+#define CHUNK_SIZE 16384
+
+int decompress_file(FILE* input, FILE* output) {
+    TInflator* inflator;
+    unsigned char source[CHUNK_SIZE];
+    unsigned char target[CHUNK_SIZE];
+    unsigned int status;
+    bool final = 0;
+    size_t bytes_read;
+
+    inflator = inflator_create(0, NULL);
+    if (!inflator) return -1;
+
+    do {
+        bytes_read = fread(source, 1, CHUNK_SIZE, input);
+        if (bytes_read < CHUNK_SIZE) final = 1;
+
+        inflator_setsrc(inflator, source, bytes_read);
+
+        do {
+            inflator_settgt(inflator, target, CHUNK_SIZE);
+            status = inflator_inflate(inflator, final);
+
+            if (status == INFLT_ERROR) {
+                fprintf(stderr, "Decompression error: %u\n", inflator->error);
+                break;
+            }
+
+            size_t have = inflator_tgtend(inflator);
+            fwrite(target, 1, have, output);
+        } while (status == INFLT_TGTEXHSTD);
+
+        if (status == INFLT_ERROR) break;
+    } while (status == INFLT_SRCEXHSTD);
+
+    inflator_destroy(inflator);
+    return (status == INFLT_OK) ? 0 : -1;
+}
+```
+
+## Important Considerations
+
+<Warning>
+  **Final Flag**: The `final` parameter in `inflator_inflate()` indicates whether this is the last chunk of input. Setting it to `1` tells the inflator that no more data will be provided.
+</Warning>
+
+<Note>
+  **Incorrect Usage Error**: If you call `inflator_setsrc()` after setting `final = 1`, you'll get an `INFLT_EINCORRECTUSE` error. Once finalized, you must call `inflator_reset()` before processing new data.
+</Note>
+
+<Note>
+  For simpler use cases without streaming, see the [Buffer Mode Guide](/guides/buffer-mode).
+</Note>

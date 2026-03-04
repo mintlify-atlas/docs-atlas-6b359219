@@ -1,0 +1,319 @@
+---
+title: 'zstrm_reset'
+description: 'Reset a stream to its initial state for reuse'
+---
+
+## Function Signature
+
+```c
+void zstrm_reset(const TZStrm* zstrm);
+```
+
+Resets the stream to its initial state, allowing it to be reused for another compression or decompression operation without needing to destroy and recreate the stream.
+
+## Parameters
+
+<ParamField path="zstrm" type="const TZStrm*" required>
+  Pointer to the stream to reset.
+</ParamField>
+
+## Return Value
+
+This function does not return a value.
+
+## Examples
+
+### Reuse Stream for Multiple Compressions
+
+```c
+const TZStrm* zstrm;
+FILE* output;
+
+/* Create compressor once */
+zstrm = zstrm_create(ZSTRM_DEFLATE | ZSTRM_GZIP, 9, NULL);
+
+/* Compress first file */
+output = fopen("file1.gz", "wb");
+zstrm_settargetfn(zstrm, file_write_callback, output);
+zstrm_deflate(zstrm, data1, data1_size);
+zstrm_flush(zstrm, 1);
+fclose(output);
+
+/* Reset and compress second file */
+zstrm_reset(zstrm);
+output = fopen("file2.gz", "wb");
+zstrm_settargetfn(zstrm, file_write_callback, output);
+zstrm_deflate(zstrm, data2, data2_size);
+zstrm_flush(zstrm, 1);
+fclose(output);
+
+/* Reset and compress third file */
+zstrm_reset(zstrm);
+output = fopen("file3.gz", "wb");
+zstrm_settargetfn(zstrm, file_write_callback, output);
+zstrm_deflate(zstrm, data3, data3_size);
+zstrm_flush(zstrm, 1);
+fclose(output);
+
+/* Clean up once */
+zstrm_destroy(zstrm);
+```
+
+### Batch Compression
+
+```c
+intxx file_write_callback(const uint8* buffer, uintxx size, void* user) {
+    FILE* fp = (FILE*)user;
+    size_t written = fwrite(buffer, 1, size, fp);
+    return (written == size) ? (intxx)written : -1;
+}
+
+int compress_multiple_files(const char** input_paths, 
+                            const char** output_paths,
+                            int file_count) {
+    const TZStrm* zstrm;
+    uint8 buffer[16384];
+    
+    /* Create compressor once */
+    zstrm = zstrm_create(ZSTRM_DEFLATE | ZSTRM_GZIP, 9, NULL);
+    if (!zstrm) {
+        return -1;
+    }
+    
+    /* Compress each file */
+    for (int i = 0; i < file_count; i++) {
+        FILE* input = fopen(input_paths[i], "rb");
+        FILE* output = fopen(output_paths[i], "wb");
+        
+        if (!input || !output) {
+            continue;
+        }
+        
+        /* Reset stream for new file (except first iteration) */
+        if (i > 0) {
+            zstrm_reset(zstrm);
+        }
+        
+        zstrm_settargetfn(zstrm, file_write_callback, output);
+        
+        /* Compress file */
+        while (!feof(input)) {
+            size_t bytes_read = fread(buffer, 1, sizeof(buffer), input);
+            if (bytes_read > 0) {
+                zstrm_deflate(zstrm, buffer, bytes_read);
+            }
+        }
+        
+        zstrm_flush(zstrm, 1);
+        
+        fclose(input);
+        fclose(output);
+    }
+    
+    /* Clean up once */
+    zstrm_destroy(zstrm);
+    return 0;
+}
+```
+
+### Reuse Decompressor
+
+```c
+const TZStrm* zstrm;
+uint8 output_buffer[65536];
+
+/* Create decompressor once */
+zstrm = zstrm_create(ZSTRM_INFLATE, 0, NULL);
+
+/* Decompress first buffer */
+zstrm_setsource(zstrm, compressed1, compressed1_size);
+uintxx size1 = zstrm_inflate(zstrm, output_buffer, sizeof(output_buffer));
+process_data(output_buffer, size1);
+
+/* Reset and decompress second buffer */
+zstrm_reset(zstrm);
+zstrm_setsource(zstrm, compressed2, compressed2_size);
+uintxx size2 = zstrm_inflate(zstrm, output_buffer, sizeof(output_buffer));
+process_data(output_buffer, size2);
+
+/* Reset and decompress third buffer */
+zstrm_reset(zstrm);
+zstrm_setsource(zstrm, compressed3, compressed3_size);
+uintxx size3 = zstrm_inflate(zstrm, output_buffer, sizeof(output_buffer));
+process_data(output_buffer, size3);
+
+zstrm_destroy(zstrm);
+```
+
+### Stream Pool for Multi-threaded Processing
+
+```c
+#define POOL_SIZE 4
+
+typedef struct {
+    const TZStrm* streams[POOL_SIZE];
+    int available[POOL_SIZE];
+    pthread_mutex_t mutex;
+} StreamPool;
+
+void init_stream_pool(StreamPool* pool) {
+    pthread_mutex_init(&pool->mutex, NULL);
+    
+    for (int i = 0; i < POOL_SIZE; i++) {
+        pool->streams[i] = zstrm_create(ZSTRM_DEFLATE | ZSTRM_GZIP, 6, NULL);
+        pool->available[i] = 1;
+    }
+}
+
+const TZStrm* acquire_stream(StreamPool* pool) {
+    pthread_mutex_lock(&pool->mutex);
+    
+    for (int i = 0; i < POOL_SIZE; i++) {
+        if (pool->available[i]) {
+            pool->available[i] = 0;
+            pthread_mutex_unlock(&pool->mutex);
+            zstrm_reset(pool->streams[i]);  /* Reset before reuse */
+            return pool->streams[i];
+        }
+    }
+    
+    pthread_mutex_unlock(&pool->mutex);
+    return NULL;  /* Pool exhausted */
+}
+
+void release_stream(StreamPool* pool, const TZStrm* zstrm) {
+    pthread_mutex_lock(&pool->mutex);
+    
+    for (int i = 0; i < POOL_SIZE; i++) {
+        if (pool->streams[i] == zstrm) {
+            pool->available[i] = 1;
+            break;
+        }
+    }
+    
+    pthread_mutex_unlock(&pool->mutex);
+}
+
+void destroy_stream_pool(StreamPool* pool) {
+    for (int i = 0; i < POOL_SIZE; i++) {
+        zstrm_destroy(pool->streams[i]);
+    }
+    pthread_mutex_destroy(&pool->mutex);
+}
+```
+
+### Error Recovery
+
+```c
+const TZStrm* zstrm;
+int retry_count = 0;
+const int MAX_RETRIES = 3;
+
+zstrm = zstrm_create(ZSTRM_DEFLATE | ZSTRM_GZIP, 9, NULL);
+zstrm_settargetfn(zstrm, network_output_callback, socket_fd);
+
+while (retry_count < MAX_RETRIES) {
+    zstrm_deflate(zstrm, data, data_size);
+    zstrm_flush(zstrm, 1);
+    
+    if (zstrm->error) {
+        fprintf(stderr, "Compression failed (attempt %d/%d): %u\n",
+                retry_count + 1, MAX_RETRIES, zstrm->error);
+        
+        /* Reset and retry */
+        zstrm_reset(zstrm);
+        retry_count++;
+        
+        /* Maybe reconnect socket or adjust settings */
+        if (!reconnect_socket(&socket_fd)) {
+            break;
+        }
+        zstrm_settargetfn(zstrm, network_output_callback, socket_fd);
+    } else {
+        /* Success */
+        break;
+    }
+}
+
+zstrm_destroy(zstrm);
+```
+
+## Notes
+
+<Note>
+  After calling `zstrm_reset()`, the stream returns to its initial state:
+  - Error codes are cleared
+  - State is reset to ready
+  - Counters (total, usedinput) are reset to zero
+  - Checksums are reset
+  
+  However, the stream retains its original configuration (mode, type, compression level).
+</Note>
+
+<Note>
+  You must reconfigure callbacks or source buffers after resetting:
+  - Call `zstrm_settargetfn()` again for compression
+  - Call `zstrm_setsourcefn()` or `zstrm_setsource()` again for decompression
+</Note>
+
+<Note>
+  Reusing streams with `zstrm_reset()` is more efficient than destroying and recreating streams, especially when processing multiple similar operations, as it avoids repeated memory allocation and initialization overhead.
+</Note>
+
+<Warning>
+  If you were using a dictionary with `zstrm_setdctn()`, you must set it again after resetting the stream if you want to use it for the next operation.
+</Warning>
+
+## Performance Benefits
+
+Reusing streams provides several advantages:
+
+1. **Reduced memory allocation**: Avoids repeated malloc/free cycles
+2. **Faster initialization**: Internal structures are already allocated
+3. **Better cache locality**: Memory remains warm in CPU cache
+4. **Lower overhead**: Especially beneficial for small files or frequent operations
+
+### Benchmark Example
+
+```c
+#include <time.h>
+
+void benchmark_reset_vs_recreate(int iterations) {
+    clock_t start, end;
+    const TZStrm* zstrm;
+    
+    /* Method 1: Reset */
+    start = clock();
+    zstrm = zstrm_create(ZSTRM_DEFLATE | ZSTRM_GZIP, 9, NULL);
+    for (int i = 0; i < iterations; i++) {
+        if (i > 0) zstrm_reset(zstrm);
+        zstrm_settargetfn(zstrm, callback, data);
+        zstrm_deflate(zstrm, buffer, size);
+        zstrm_flush(zstrm, 1);
+    }
+    zstrm_destroy(zstrm);
+    end = clock();
+    printf("Reset method: %.3f seconds\n", 
+           (double)(end - start) / CLOCKS_PER_SEC);
+    
+    /* Method 2: Recreate */
+    start = clock();
+    for (int i = 0; i < iterations; i++) {
+        zstrm = zstrm_create(ZSTRM_DEFLATE | ZSTRM_GZIP, 9, NULL);
+        zstrm_settargetfn(zstrm, callback, data);
+        zstrm_deflate(zstrm, buffer, size);
+        zstrm_flush(zstrm, 1);
+        zstrm_destroy(zstrm);
+    }
+    end = clock();
+    printf("Recreate method: %.3f seconds\n",
+           (double)(end - start) / CLOCKS_PER_SEC);
+}
+```
+
+## See Also
+
+- [zstrm_create](/api/zstrm/zstrm-create) - Create a new stream
+- [zstrm_destroy](/api/zstrm/zstrm-destroy) - Destroy a stream
+- [zstrm_deflate](/api/zstrm/zstrm-deflate) - Compress data
+- [zstrm_inflate](/api/zstrm/zstrm-inflate) - Decompress data

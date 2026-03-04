@@ -1,0 +1,140 @@
+---
+title: 'zstrm_create'
+description: 'Create a new compression/decompression stream'
+---
+
+## Function Signature
+
+```c
+const TZStrm* zstrm_create(uintxx flags, intxx level, const TAllocator* allocator);
+```
+
+Creates a new stream for compression or decompression operations.
+
+## Parameters
+
+<ParamField path="flags" type="uintxx" required>
+  Combination of flags specifying the stream mode, type, and options:
+  
+  **Mode flags (required, choose one):**
+  - `ZSTRM_INFLATE` - Create a decompression stream
+  - `ZSTRM_DEFLATE` - Create a compression stream
+  
+  **Type flags (compression requires one, decompression optional):**
+  - `ZSTRM_DFLT` - Raw DEFLATE encoding
+  - `ZSTRM_ZLIB` - Zlib format (DEFLATE with header/trailer)
+  - `ZSTRM_GZIP` - Gzip format
+  
+  **Optional flags:**
+  - `ZSTRM_DOCRC` - Force CRC32 checksums
+  - `ZSTRM_DOADLER` - Force Adler32 checksums
+  - `ZSTRM_NOCRC` - Ignore CRC checksums (inflate only)
+  - `ZSTRM_NOADLER` - Ignore Adler32 checksums (inflate only)
+  
+  Flags are combined using the bitwise OR operator (`|`).
+</ParamField>
+
+<ParamField path="level" type="intxx">
+  Compression level for deflate mode:
+  - `0` - No compression (store only)
+  - `1-9` - Compression levels (1=fastest, 9=best compression)
+  - Ignored for inflate mode (can be set to `0`)
+</ParamField>
+
+<ParamField path="allocator" type="const TAllocator*">
+  Custom memory allocator. Pass `NULL` to use the default allocator.
+</ParamField>
+
+## Return Value
+
+<ResponseField name="return" type="const TZStrm*">
+  Pointer to the newly created stream object, or `NULL` if creation failed (typically due to out of memory).
+</ResponseField>
+
+## Examples
+
+### Create a Gzip Compressor
+
+```c
+const TZStrm* zstrm;
+
+/* Creates a GZIP compressor using compression level 9 */
+zstrm = zstrm_create(ZSTRM_DEFLATE | ZSTRM_GZIP, 9, NULL);
+if (zstrm == NULL) {
+    /* Handle error - likely out of memory */
+    return -1;
+}
+```
+
+### Create a Zlib Compressor
+
+```c
+const TZStrm* zstrm;
+
+/* Creates a zlib compressor using compression level 6 (default) */
+zstrm = zstrm_create(ZSTRM_DEFLATE | ZSTRM_ZLIB, 6, NULL);
+if (zstrm == NULL) {
+    /* Handle error */
+    return -1;
+}
+```
+
+### Create a Universal Decompressor
+
+```c
+const TZStrm* zstrm;
+
+/* Creates a decompressor that auto-detects the format */
+zstrm = zstrm_create(ZSTRM_INFLATE, 0, NULL);
+if (zstrm == NULL) {
+    /* Handle error */
+    return -1;
+}
+```
+
+### Create a Decompressor for Gzip Only
+
+```c
+const TZStrm* zstrm;
+
+/* Creates a decompressor restricted to gzip format */
+zstrm = zstrm_create(ZSTRM_INFLATE | ZSTRM_GZIP, 0, NULL);
+if (zstrm == NULL) {
+    /* Handle error */
+    return -1;
+}
+```
+
+### Create with Forced Checksums
+
+```c
+const TZStrm* zstrm;
+
+/* Raw DEFLATE with forced CRC32 checksum */
+zstrm = zstrm_create(ZSTRM_DEFLATE | ZSTRM_DFLT | ZSTRM_DOCRC, 9, NULL);
+if (zstrm == NULL) {
+    /* Handle error */
+    return -1;
+}
+```
+
+## Notes
+
+<Note>
+  For decompression, the stream type flags are optional. If not specified, the stream will automatically detect the format from the input data.
+</Note>
+
+<Warning>
+  Always check the return value for `NULL` before using the stream. A `NULL` return typically indicates an out-of-memory condition.
+</Warning>
+
+<Note>
+  After creating the stream, you must set up the input/output callbacks or buffers before performing compression or decompression operations.
+</Note>
+
+## See Also
+
+- [zstrm_destroy](/api/zstrm/zstrm-destroy) - Destroy a stream and free resources
+- [zstrm_setsourcefn](/api/zstrm/zstrm-setsourcefn) - Set input callback
+- [zstrm_settargetfn](/api/zstrm/zstrm-settargetfn) - Set output callback
+- [zstrm_setsource](/api/zstrm/zstrm-setsource) - Set input buffer

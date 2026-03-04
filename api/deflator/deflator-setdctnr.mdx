@@ -1,0 +1,199 @@
+---
+title: 'deflator_setdctnr'
+description: 'Set the dictionary for the deflator instance'
+---
+
+## Function Signature
+
+```c
+void deflator_setdctnr(TDeflator*, const uint8* dict, uintxx size);
+```
+
+Sets a preset dictionary for the deflator instance. A preset dictionary can improve compression ratio when compressing similar data, especially for small files.
+
+## Parameters
+
+<ParamField path="state" type="TDeflator*" required>
+  Pointer to the deflator instance.
+</ParamField>
+
+<ParamField path="dict" type="const uint8*" required>
+  Pointer to the dictionary data. This should contain representative data that is similar to what will be compressed.
+</ParamField>
+
+<ParamField path="size" type="uintxx" required>
+  Size of the dictionary in bytes.
+  
+  <Note>
+  The deflate specification limits dictionary size. Typical implementations use up to 32KB.
+  </Note>
+</ParamField>
+
+## Return Value
+
+This function does not return a value.
+
+## When to Use a Dictionary
+
+Dictionaries are beneficial when:
+
+- Compressing many small files with similar content
+- The data has repeating patterns that appear across different compression sessions
+- You have representative sample data from previous compression operations
+- You need better compression ratios for small inputs
+
+<Warning>
+**The same dictionary must be used for both compression and decompression.** If you compress data with a dictionary, the decompressor must use the identical dictionary to decompress the data correctly.
+</Warning>
+
+## Usage Example
+
+### Basic Dictionary Usage
+
+```c
+#include <jdeflate/deflator.h>
+
+// Sample dictionary for JSON-like data
+const char* dict_data = 
+    "{\"name\":\"\"value\":\"type\":\"id\":data\":[],}";
+
+TDeflator* deflator = deflator_create(0, 6, NULL);
+if (!deflator) {
+    fprintf(stderr, "Failed to create deflator\n");
+    return -1;
+}
+
+// Set the dictionary
+deflator_setdctnr(deflator, (const uint8*)dict_data, strlen(dict_data));
+
+// Now compress data
+uint8 source[] = "{\"name\":\"John\",\"value\":42}";
+deflator_setsrc(deflator, source, sizeof(source) - 1);
+
+// Continue with compression...
+```
+
+### Compressing Multiple Small Files with Shared Dictionary
+
+```c
+#include <jdeflate/deflator.h>
+#include <stdio.h>
+#include <string.h>
+
+// Build dictionary from sample data
+const char* samples[] = {
+    "GET /api/users HTTP/1.1\r\n",
+    "POST /api/data HTTP/1.1\r\n",
+    "Content-Type: application/json\r\n",
+    "Authorization: Bearer token\r\n"
+};
+
+char dictionary[4096];
+size_t dict_len = 0;
+
+// Concatenate samples into dictionary
+for (int i = 0; i < 4; i++) {
+    size_t len = strlen(samples[i]);
+    if (dict_len + len < sizeof(dictionary)) {
+        memcpy(dictionary + dict_len, samples[i], len);
+        dict_len += len;
+    }
+}
+
+// Create deflator and set dictionary
+TDeflator* deflator = deflator_create(0, 6, NULL);
+deflator_setdctnr(deflator, (const uint8*)dictionary, dict_len);
+
+// Compress multiple HTTP requests
+const char* request = "GET /api/users HTTP/1.1\r\nAuthorization: Bearer token\r\n";
+deflator_setsrc(deflator, (const uint8*)request, strlen(request));
+
+// Compression will benefit from the dictionary
+// ...
+```
+
+### Persisting Dictionary for Reuse
+
+```c
+#include <stdio.h>
+
+// Save dictionary to file
+int save_dictionary(const uint8* dict, uintxx size, const char* path) {
+    FILE* f = fopen(path, "wb");
+    if (!f) return -1;
+    
+    fwrite(dict, 1, size, f);
+    fclose(f);
+    return 0;
+}
+
+// Load dictionary from file
+int load_dictionary(uint8* dict, uintxx* size, const char* path) {
+    FILE* f = fopen(path, "rb");
+    if (!f) return -1;
+    
+    fseek(f, 0, SEEK_END);
+    *size = ftell(f);
+    fseek(f, 0, SEEK_SET);
+    
+    fread(dict, 1, *size, f);
+    fclose(f);
+    return 0;
+}
+
+// Usage
+uint8 dict[32768];
+uintxx dict_size;
+
+if (load_dictionary(dict, &dict_size, "compression.dict") == 0) {
+    deflator_setdctnr(deflator, dict, dict_size);
+}
+```
+
+### Resetting Dictionary
+
+```c
+// Reset the deflator to clear the dictionary
+deflator_reset(deflator);
+
+// Set a new dictionary
+deflator_setdctnr(deflator, new_dict, new_dict_size);
+```
+
+## Building an Effective Dictionary
+
+Tips for creating a good dictionary:
+
+1. **Use representative data**: Include common patterns from your target data
+2. **Size appropriately**: Typically 4KB - 32KB is sufficient
+3. **Place common sequences first**: More frequently occurring patterns should appear earlier
+4. **Include boundaries**: If compressing structured data, include delimiters and common tokens
+
+```c
+// Example: Dictionary for log files
+const char* log_dictionary = 
+    "ERROR WARNING INFO DEBUG "
+    "[2024-01-01] [2024-01-02] "
+    "timestamp message level severity "
+    "exception stacktrace error code ";
+
+deflator_setdctnr(deflator, 
+                  (const uint8*)log_dictionary, 
+                  strlen(log_dictionary));
+```
+
+## Important Notes
+
+<Note>
+The dictionary must be set **before** beginning compression and **after** creating or resetting the deflator.
+</Note>
+
+<Warning>
+Do not change the dictionary in the middle of a compression operation. Reset the deflator first if you need to use a different dictionary.
+</Warning>
+
+## Related Functions
+
+- [`deflator_create()`](/api/deflator/deflator-create) - Create a deflator instance
+- [`deflator_reset()`](/api/deflator/deflator-reset) - Reset deflator to initial state
+- [`deflator_deflate()`](/api/deflator/deflator-deflate) - Compress data using the dictionary

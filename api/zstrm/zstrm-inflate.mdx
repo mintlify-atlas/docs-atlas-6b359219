@@ -1,0 +1,212 @@
+---
+title: 'zstrm_inflate'
+description: 'Decompress data using the deflate algorithm'
+---
+
+## Function Signature
+
+```c
+uintxx zstrm_inflate(const TZStrm* zstrm, void* target, uintxx n);
+```
+
+Decompresses up to `n` bytes of data into the target buffer. The compressed input is read from either the source buffer set with `zstrm_setsource()` or the source callback function set with `zstrm_setsourcefn()`.
+
+## Parameters
+
+<ParamField path="zstrm" type="const TZStrm*" required>
+  Pointer to a stream created with `ZSTRM_INFLATE` mode.
+</ParamField>
+
+<ParamField path="target" type="void*" required>
+  Pointer to the buffer where decompressed data will be written.
+</ParamField>
+
+<ParamField path="n" type="uintxx" required>
+  Maximum number of bytes to write to the target buffer. Must be limited to 2^32 - 1 bytes.
+</ParamField>
+
+## Return Value
+
+<ResponseField name="return" type="uintxx">
+  Number of bytes written to the target buffer. May be less than `n` if the end of the compressed stream is reached or an error occurs.
+  
+  Check `zstrm->error` after calling to detect errors.
+</ResponseField>
+
+## Examples
+
+### Decompress from Buffer
+
+```c
+const TZStrm* zstrm;
+uint8* compressed_data;     /* Compressed input */
+uintxx compressed_size;
+uint8 output_buffer[65536]; /* Output buffer */
+uintxx decompressed;
+
+/* Create decompressor */
+zstrm = zstrm_create(ZSTRM_INFLATE, 0, NULL);
+if (zstrm == NULL) {
+    return -1;
+}
+
+/* Set source buffer */
+zstrm_setsource(zstrm, compressed_data, compressed_size);
+
+/* Decompress */
+decompressed = zstrm_inflate(zstrm, output_buffer, sizeof(output_buffer));
+if (zstrm->error) {
+    fprintf(stderr, "Decompression error: %u\n", zstrm->error);
+    zstrm_destroy(zstrm);
+    return -1;
+}
+
+printf("Decompressed %llu bytes\n", (unsigned long long)decompressed);
+zstrm_destroy(zstrm);
+```
+
+### Decompress Using Callback
+
+```c
+/* Source callback that reads compressed data from a file */
+intxx file_read_callback(uint8* buffer, uintxx size, void* user) {
+    FILE* fp = (FILE*)user;
+    size_t bytes_read = fread(buffer, 1, size, fp);
+    
+    if (ferror(fp)) {
+        return -1;  /* Error */
+    }
+    
+    return (intxx)bytes_read;  /* May return 0 at EOF */
+}
+
+/* Usage */
+FILE* input_file = fopen("data.gz", "rb");
+const TZStrm* zstrm;
+uint8 output_buffer[65536];
+
+zstrm = zstrm_create(ZSTRM_INFLATE | ZSTRM_GZIP, 0, NULL);
+zstrm_setsourcefn(zstrm, file_read_callback, input_file);
+
+uintxx total = zstrm_inflate(zstrm, output_buffer, sizeof(output_buffer));
+if (zstrm->error) {
+    fprintf(stderr, "Error: %u\n", zstrm->error);
+}
+
+zstrm_destroy(zstrm);
+fclose(input_file);
+```
+
+### Decompress in Chunks
+
+```c
+const TZStrm* zstrm;
+FILE* input_file;
+FILE* output_file;
+const size_t CHUNK_SIZE = 16384;
+uint8 output_buffer[CHUNK_SIZE];
+
+zstrm = zstrm_create(ZSTRM_INFLATE, 0, NULL);
+zstrm_setsourcefn(zstrm, file_read_callback, input_file);
+
+/* Decompress until stream ends */
+while (zstrm->state != ZSTRM_END && !zstrm->error) {
+    uintxx decompressed = zstrm_inflate(zstrm, output_buffer, CHUNK_SIZE);
+    
+    if (zstrm->error) {
+        fprintf(stderr, "Decompression failed\n");
+        break;
+    }
+    
+    if (decompressed > 0) {
+        fwrite(output_buffer, 1, decompressed, output_file);
+    }
+}
+
+zstrm_destroy(zstrm);
+```
+
+### Handle Dictionary Requirement
+
+```c
+const TZStrm* zstrm;
+uint8 dictionary[32768];
+uintxx dict_size;
+
+zstrm = zstrm_create(ZSTRM_INFLATE | ZSTRM_ZLIB, 0, NULL);
+zstrm_setsource(zstrm, compressed_data, compressed_size);
+
+uintxx total = zstrm_inflate(zstrm, output_buffer, output_size);
+
+/* Check if dictionary is needed */
+if (zstrm->state == ZSTRM_NEEDDICT) {
+    /* Load dictionary based on zstrm->dictid */
+    load_dictionary(zstrm->dictid, dictionary, &dict_size);
+    
+    /* Set dictionary and retry */
+    zstrm_setdctn(zstrm, dictionary, dict_size);
+    total = zstrm_inflate(zstrm, output_buffer, output_size);
+}
+
+if (zstrm->error) {
+    fprintf(stderr, "Error: %u\n", zstrm->error);
+}
+
+zstrm_destroy(zstrm);
+```
+
+## Notes
+
+<Warning>
+  You must set up an input source before calling `zstrm_inflate()`. Use either `zstrm_setsource()` to provide a buffer or `zstrm_setsourcefn()` to provide a callback function.
+</Warning>
+
+<Note>
+  The function may return fewer bytes than requested if:
+  - The end of the compressed stream is reached (`zstrm->state == ZSTRM_END`)
+  - An error occurs (check `zstrm->error`)
+  - A dictionary is required (`zstrm->state == ZSTRM_NEEDDICT`)
+</Note>
+
+<Note>
+  The size of the target buffer must not exceed 2^32 - 1 bytes per call. For larger output, call the function multiple times.
+</Note>
+
+<Note>
+  Check `zstrm->state` to determine if decompression is complete. The state will be `ZSTRM_END` when the entire stream has been processed.
+</Note>
+
+## Error Handling
+
+Always check `zstrm->error` after calling `zstrm_inflate()`:
+
+```c
+total = zstrm_inflate(zstrm, target, targetsize);
+if (zstrm->error != ZSTRM_OK) {
+    switch (zstrm->error) {
+        case ZSTRM_ECHECKSUM:
+            /* Checksum verification failed */
+            break;
+        case ZSTRM_EBADDATA:
+            /* Corrupted compressed data */
+            break;
+        case ZSTRM_EIOERROR:
+            /* Source callback returned an error */
+            break;
+        case ZSTRM_EMISSINGDICT:
+            /* Dictionary required but not provided */
+            break;
+        default:
+            /* Other error */
+            break;
+    }
+}
+```
+
+## See Also
+
+- [zstrm_setsource](/api/zstrm/zstrm-setsource) - Set input buffer
+- [zstrm_setsourcefn](/api/zstrm/zstrm-setsourcefn) - Set input callback
+- [zstrm_setdctn](/api/zstrm/zstrm-setdctn) - Set dictionary for decompression
+- [zstrm_deflate](/api/zstrm/zstrm-deflate) - Compress data
+- [zstrm_create](/api/zstrm/zstrm-create) - Create a stream

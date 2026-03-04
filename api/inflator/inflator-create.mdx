@@ -1,0 +1,92 @@
+---
+title: "inflator_create"
+description: "Create an inflator instance for decompressing DEFLATE data"
+---
+
+## Function Signature
+
+```c
+TInflator* inflator_create(uintxx flags, const TAllocator* allctr);
+```
+
+Creates a new inflator instance for decompressing DEFLATE-compressed data.
+
+## Parameters
+
+<ParamField path="flags" type="uintxx">
+  Configuration flags for the inflator. Currently, pass `0` for default behavior.
+</ParamField>
+
+<ParamField path="allctr" type="const TAllocator*">
+  Custom memory allocator to use for the inflator. If `NULL`, the default allocator is used.
+  
+  This allows you to control memory allocation for the inflator instance and its internal buffers.
+</ParamField>
+
+## Return Value
+
+<ResponseField name="TInflator*" type="pointer">
+  Returns a pointer to the newly created inflator instance on success, or `NULL` if allocation fails.
+</ResponseField>
+
+## Usage Example
+
+```c
+#include <jdeflate/inflator.h>
+
+// Create an inflator with default allocator
+TInflator* inflator = inflator_create(0, NULL);
+if (!inflator) {
+    // Handle allocation failure
+    fprintf(stderr, "Failed to create inflator\n");
+    return -1;
+}
+
+// Use the inflator...
+// inflator_setsrc(inflator, ...);
+// inflator_inflate(inflator, ...);
+
+// Clean up when done
+inflator_destroy(inflator);
+```
+
+## Custom Allocator Example
+
+```c
+#include <jdeflate/inflator.h>
+#include <ctoolbox/memory.h>
+
+// Define a custom allocator
+TAllocator my_allocator = {
+    .alloc = my_alloc_function,
+    .free = my_free_function,
+    .realloc = my_realloc_function,
+    .context = my_context
+};
+
+// Create inflator with custom allocator
+TInflator* inflator = inflator_create(0, &my_allocator);
+if (!inflator) {
+    fprintf(stderr, "Failed to create inflator\n");
+    return -1;
+}
+
+// Use and clean up
+inflator_destroy(inflator);
+```
+
+## Notes
+
+<Note>
+- Always check the return value for `NULL` to handle allocation failures gracefully.
+- The inflator instance must be destroyed using `inflator_destroy()` when no longer needed to prevent memory leaks.
+</Note>
+
+<Warning>
+Do not use the inflator instance if `inflator_create()` returns `NULL`. Always check for allocation failure.
+</Warning>
+
+## See Also
+
+- [inflator_destroy()](/api/inflator/inflator-destroy) - Destroy an inflator instance
+- [inflator_reset()](/api/inflator/inflator-reset) - Reset an inflator to reuse it

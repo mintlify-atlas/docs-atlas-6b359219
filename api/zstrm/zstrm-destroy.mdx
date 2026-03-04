@@ -1,0 +1,105 @@
+---
+title: 'zstrm_destroy'
+description: 'Destroy a stream and free all associated resources'
+---
+
+## Function Signature
+
+```c
+void zstrm_destroy(const TZStrm* zstrm);
+```
+
+Destroys a stream created with `zstrm_create()` and frees all associated resources.
+
+## Parameters
+
+<ParamField path="zstrm" type="const TZStrm*" required>
+  Pointer to the stream to destroy. Must be a valid stream created by `zstrm_create()`.
+</ParamField>
+
+## Return Value
+
+This function does not return a value.
+
+## Examples
+
+### Basic Usage
+
+```c
+const TZStrm* zstrm;
+
+/* Create a stream */
+zstrm = zstrm_create(ZSTRM_DEFLATE | ZSTRM_GZIP, 9, NULL);
+if (zstrm == NULL) {
+    return -1;
+}
+
+/* ... perform compression operations ... */
+
+/* Destroy the stream when done */
+zstrm_destroy(zstrm);
+```
+
+### Complete Compression Workflow
+
+```c
+const TZStrm* zstrm;
+
+/* Create stream */
+zstrm = zstrm_create(ZSTRM_DEFLATE | ZSTRM_GZIP, 9, NULL);
+if (zstrm == NULL) {
+    return -1;
+}
+
+/* Set up output callback */
+zstrm_settargetfn(zstrm, output_callback, userdata);
+
+/* Compress data */
+zstrm_deflate(zstrm, source_data, source_size);
+
+/* Finalize */
+zstrm_flush(zstrm, 1);
+
+/* Clean up */
+zstrm_destroy(zstrm);
+```
+
+### Complete Decompression Workflow
+
+```c
+const TZStrm* zstrm;
+
+/* Create stream */
+zstrm = zstrm_create(ZSTRM_INFLATE, 0, NULL);
+if (zstrm == NULL) {
+    return -1;
+}
+
+/* Set up source buffer */
+zstrm_setsource(zstrm, compressed_data, compressed_size);
+
+/* Decompress */
+uintxx decompressed = zstrm_inflate(zstrm, output_buffer, output_size);
+
+/* Clean up */
+zstrm_destroy(zstrm);
+```
+
+## Notes
+
+<Warning>
+  Always call `zstrm_destroy()` when you're finished with a stream to prevent memory leaks. Every successful call to `zstrm_create()` must be paired with a call to `zstrm_destroy()`.
+</Warning>
+
+<Note>
+  It is safe to call `zstrm_destroy()` even if previous operations on the stream have failed. The function will properly clean up all allocated resources regardless of the stream's error state.
+</Note>
+
+<Note>
+  After calling `zstrm_destroy()`, the pointer becomes invalid and must not be used. Do not attempt to destroy the same stream twice.
+</Note>
+
+## See Also
+
+- [zstrm_create](/api/zstrm/zstrm-create) - Create a new stream
+- [zstrm_reset](/api/zstrm/zstrm-reset) - Reset a stream to reuse it

@@ -1,0 +1,216 @@
+---
+title: "inflator_settgt"
+description: "Set the target buffer for decompressed output data"
+---
+
+## Function Signature
+
+```c
+void inflator_settgt(TInflator* state, uint8* target, uintxx size);
+```
+
+Sets the target (output) buffer for the inflator. This buffer will receive the decompressed data.
+
+## Implementation
+
+This is an inline function defined as:
+
+```c
+CTB_INLINE void
+inflator_settgt(TInflator* state, uint8* target, uintxx size)
+{
+    CTB_ASSERT(state && target && size);
+
+    state->target = state->tbgn = state->tend = target;
+    state->tend  += size;
+}
+```
+
+## Parameters
+
+<ParamField path="state" type="TInflator*">
+  Pointer to the inflator instance. Must not be `NULL`.
+</ParamField>
+
+<ParamField path="target" type="uint8*">
+  Pointer to the buffer that will receive decompressed data. Must not be `NULL`.
+  
+  This buffer must be writable and remain valid until the next call to `inflator_settgt()` or until you're done processing the decompressed data.
+</ParamField>
+
+<ParamField path="size" type="uintxx">
+  Size of the target buffer in bytes. Must be greater than 0.
+  
+  Larger buffers reduce the number of `INFLT_TGTEXHSTD` results and can improve performance.
+</ParamField>
+
+## Return Value
+
+This function does not return a value.
+
+## Usage Example
+
+```c
+#include <jdeflate/inflator.h>
+
+#define OUTPUT_BUFFER_SIZE 32768
+
+TInflator* inflator = inflator_create(0, NULL);
+
+uint8 compressed_data[8192];
+uint8 output_buffer[OUTPUT_BUFFER_SIZE];
+
+// Set source buffer
+inflator_setsrc(inflator, compressed_data, sizeof(compressed_data));
+
+// Set target buffer
+inflator_settgt(inflator, output_buffer, OUTPUT_BUFFER_SIZE);
+
+// Perform inflation
+eINFLTResult result = inflator_inflate(inflator, 1);
+
+if (result == INFLT_OK || result == INFLT_TGTEXHSTD) {
+    // Get the number of bytes written
+    uintxx bytes_written = inflator_tgtend(inflator);
+    
+    // Process the decompressed data
+    process_data(output_buffer, bytes_written);
+}
+```
+
+## Multiple Target Buffers Example
+
+```c
+#include <jdeflate/inflator.h>
+#include <stdio.h>
+
+#define CHUNK_SIZE 16384
+
+int decompress_to_file(TInflator* inflator, FILE* output) {
+    uint8 out_buffer[CHUNK_SIZE];
+    eINFLTResult result;
+
+    inflator_setsrc(inflator, compressed_data, compressed_size);
+
+    do {
+        // Set a fresh target buffer for each iteration
+        inflator_settgt(inflator, out_buffer, CHUNK_SIZE);
+        
+        result = inflator_inflate(inflator, 1);
+
+        // Write whatever was decompressed
+        uintxx bytes_written = inflator_tgtend(inflator);
+        if (bytes_written > 0) {
+            fwrite(out_buffer, 1, bytes_written, output);
+        }
+
+    } while (result == INFLT_TGTEXHSTD);
+
+    return (result == INFLT_OK) ? 0 : -1;
+}
+```
+
+## Dynamic Output Buffer Example
+
+```c
+#include <jdeflate/inflator.h>
+#include <stdlib.h>
+#include <string.h>
+
+// Decompress to a dynamically growing buffer
+uint8* decompress_to_memory(const uint8* compressed, uintxx comp_size,
+                            uintxx* out_size)
+{
+    TInflator* inflator = inflator_create(0, NULL);
+    if (!inflator) return NULL;
+
+    uintxx capacity = comp_size * 3;  // Initial guess
+    uint8* output = malloc(capacity);
+    uintxx total_written = 0;
+
+    inflator_setsrc(inflator, compressed, comp_size);
+
+    eINFLTResult result;
+    do {
+        // Ensure we have space
+        if (total_written >= capacity) {
+            capacity *= 2;
+            output = realloc(output, capacity);
+        }
+
+        // Set target to remaining space
+        uintxx remaining = capacity - total_written;
+        inflator_settgt(inflator, output + total_written, remaining);
+        
+        result = inflator_inflate(inflator, 1);
+
+        total_written += inflator_tgtend(inflator);
+
+    } while (result == INFLT_TGTEXHSTD);
+
+    inflator_destroy(inflator);
+
+    if (result == INFLT_OK) {
+        *out_size = total_written;
+        return realloc(output, total_written);  // Trim to actual size
+    } else {
+        free(output);
+        return NULL;
+    }
+}
+```
+
+## Checking Output Progress
+
+```c
+#include <jdeflate/inflator.h>
+
+TInflator* inflator = inflator_create(0, NULL);
+uint8 source[1024];
+uint8 target[2048];
+
+inflator_setsrc(inflator, source, 1024);
+inflator_settgt(inflator, target, 2048);
+
+eINFLTResult result = inflator_inflate(inflator, 1);
+
+// Check how many bytes were written
+uintxx bytes_written = inflator_tgtend(inflator);
+printf("Decompressed %llu bytes\n", bytes_written);
+
+if (result == INFLT_TGTEXHSTD) {
+    printf("Target buffer was filled, need to provide more space\n");
+} else if (result == INFLT_OK) {
+    printf("Decompression complete\n");
+}
+```
+
+## Notes
+
+<Note>
+- The target buffer must remain valid and unmodified until you're done processing the decompressed data.
+- You can call `inflator_settgt()` multiple times to provide new output buffers as needed.
+- Use `inflator_tgtend()` to determine how many bytes were written to the current target buffer.
+- The inflator writes directly to your buffer; it does not perform any internal buffering of output.
+- Larger target buffers generally improve performance by reducing the number of buffer swaps.
+</Note>
+
+<Warning>
+- All parameters must be valid (non-NULL for pointers, non-zero for size). The function asserts these conditions.
+- Do not read from the target buffer beyond the number of bytes indicated by `inflator_tgtend()`.
+- If `inflator_inflate()` returns `INFLT_TGTEXHSTD`, you must call `inflator_settgt()` again before continuing.
+</Warning>
+
+## Performance Tips
+
+<Note>
+- Use buffer sizes of 16KB-64KB for optimal performance in most cases.
+- Align buffers to cache line boundaries (64 bytes) for better performance on some architectures.
+- Reuse the same buffer across multiple `inflator_settgt()` calls to reduce memory allocations.
+</Note>
+
+## See Also
+
+- [inflator_setsrc()](/api/inflator/inflator-setsrc) - Set the source buffer
+- [inflator_inflate()](/api/inflator/inflator-inflate) - Perform inflation
+- [Inflator Overview](/api/inflator/overview) - Complete workflow

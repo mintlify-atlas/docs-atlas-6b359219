@@ -1,0 +1,217 @@
+---
+title: 'zstrm_flush'
+description: 'Flush pending output and optionally finalize the compression stream'
+---
+
+## Function Signature
+
+```c
+void zstrm_flush(const TZStrm* zstrm, uint32 final);
+```
+
+Flushes any pending compressed data to the output callback function. When `final` is non-zero, the stream is finalized and no more data can be compressed.
+
+## Parameters
+
+<ParamField path="zstrm" type="const TZStrm*" required>
+  Pointer to a stream created with `ZSTRM_DEFLATE` mode.
+</ParamField>
+
+<ParamField path="final" type="uint32" required>
+  - `0` - Flush pending data but keep the stream open for more compression
+  - Non-zero (typically `1`) - Finalize the stream, write trailer, and close the stream
+</ParamField>
+
+## Return Value
+
+This function does not return a value. Check `zstrm->error` after calling to detect errors.
+
+## Examples
+
+### Finalize Compression Stream
+
+```c
+const TZStrm* zstrm;
+
+/* Create and set up compressor */
+zstrm = zstrm_create(ZSTRM_DEFLATE | ZSTRM_GZIP, 9, NULL);
+zstrm_settargetfn(zstrm, output_callback, userdata);
+
+/* Compress data */
+zstrm_deflate(zstrm, source_data, source_size);
+if (zstrm->error) {
+    fprintf(stderr, "Compression error\n");
+    zstrm_destroy(zstrm);
+    return -1;
+}
+
+/* Finalize the stream - writes gzip trailer and any pending data */
+zstrm_flush(zstrm, 1);
+if (zstrm->error) {
+    fprintf(stderr, "Flush error\n");
+    zstrm_destroy(zstrm);
+    return -1;
+}
+
+/* Clean up */
+zstrm_destroy(zstrm);
+```
+
+### Intermediate Flush
+
+```c
+const TZStrm* zstrm;
+
+zstrm = zstrm_create(ZSTRM_DEFLATE | ZSTRM_GZIP, 6, NULL);
+zstrm_settargetfn(zstrm, network_send_callback, socket_fd);
+
+/* Compress first chunk */
+zstrm_deflate(zstrm, chunk1, chunk1_size);
+
+/* Flush to ensure data is sent immediately (e.g., for real-time streaming) */
+zstrm_flush(zstrm, 0);
+
+/* Continue compressing more data */
+zstrm_deflate(zstrm, chunk2, chunk2_size);
+
+/* Final flush */
+zstrm_flush(zstrm, 1);
+
+zstrm_destroy(zstrm);
+```
+
+### Complete File Compression
+
+```c
+intxx file_write_callback(const uint8* buffer, uintxx size, void* user) {
+    FILE* fp = (FILE*)user;
+    size_t written = fwrite(buffer, 1, size, fp);
+    return (written == size) ? (intxx)written : -1;
+}
+
+int compress_file(const char* input_path, const char* output_path) {
+    FILE* input = fopen(input_path, "rb");
+    FILE* output = fopen(output_path, "wb");
+    const TZStrm* zstrm;
+    uint8 buffer[16384];
+    
+    if (!input || !output) {
+        return -1;
+    }
+    
+    zstrm = zstrm_create(ZSTRM_DEFLATE | ZSTRM_GZIP, 9, NULL);
+    zstrm_settargetfn(zstrm, file_write_callback, output);
+    
+    /* Compress file in chunks */
+    while (!feof(input)) {
+        size_t bytes_read = fread(buffer, 1, sizeof(buffer), input);
+        if (bytes_read > 0) {
+            zstrm_deflate(zstrm, buffer, bytes_read);
+            if (zstrm->error) {
+                goto error;
+            }
+        }
+    }
+    
+    /* Finalize compression */
+    zstrm_flush(zstrm, 1);
+    if (zstrm->error) {
+        goto error;
+    }
+    
+    zstrm_destroy(zstrm);
+    fclose(input);
+    fclose(output);
+    return 0;
+    
+error:
+    zstrm_destroy(zstrm);
+    fclose(input);
+    fclose(output);
+    return -1;
+}
+```
+
+### Streaming with Periodic Flushes
+
+```c
+const TZStrm* zstrm;
+const int FLUSH_INTERVAL = 10;  /* Flush every 10 chunks */
+int chunk_count = 0;
+
+zstrm = zstrm_create(ZSTRM_DEFLATE | ZSTRM_GZIP, 6, NULL);
+zstrm_settargetfn(zstrm, stream_output_callback, stream_context);
+
+while (have_more_data()) {
+    uint8* chunk;
+    uintxx chunk_size;
+    
+    get_next_chunk(&chunk, &chunk_size);
+    zstrm_deflate(zstrm, chunk, chunk_size);
+    
+    chunk_count++;
+    
+    /* Flush periodically to reduce latency in streaming scenarios */
+    if (chunk_count % FLUSH_INTERVAL == 0) {
+        zstrm_flush(zstrm, 0);  /* Intermediate flush */
+    }
+}
+
+/* Final flush */
+zstrm_flush(zstrm, 1);
+zstrm_destroy(zstrm);
+```
+
+## Notes
+
+<Warning>
+  Always call `zstrm_flush(zstrm, 1)` with `final=1` when you're done compressing data. This ensures that:
+  - All pending data is written to the output
+  - The appropriate trailer (for zlib/gzip) is written
+  - Checksums are finalized and written
+  
+  Failure to finalize will result in an incomplete, invalid compressed stream.
+</Warning>
+
+<Note>
+  Calling `zstrm_flush()` with `final=0` can be useful for:
+  - Real-time streaming applications where you need to minimize latency
+  - Ensuring data is transmitted before waiting for more input
+  - Creating synchronization points in the compressed stream
+  
+  However, frequent flushing may reduce compression ratio.
+</Note>
+
+<Note>
+  After calling `zstrm_flush(zstrm, 1)`, the stream is finalized. Attempting to compress more data will result in an error. If you need to compress more data, use `zstrm_reset()` or create a new stream.
+</Note>
+
+<Note>
+  Always check `zstrm->error` after calling `zstrm_flush()` to detect any errors that occurred during flushing.
+</Note>
+
+## Error Handling
+
+```c
+zstrm_flush(zstrm, 1);
+if (zstrm->error != ZSTRM_OK) {
+    switch (zstrm->error) {
+        case ZSTRM_EIOERROR:
+            /* Output callback failed */
+            break;
+        case ZSTRM_EINCORRECTUSE:
+            /* Stream was already finalized or in wrong state */
+            break;
+        default:
+            /* Other error */
+            break;
+    }
+}
+```
+
+## See Also
+
+- [zstrm_deflate](/api/zstrm/zstrm-deflate) - Compress data
+- [zstrm_settargetfn](/api/zstrm/zstrm-settargetfn) - Set output callback
+- [zstrm_reset](/api/zstrm/zstrm-reset) - Reset stream for reuse
+- [zstrm_create](/api/zstrm/zstrm-create) - Create a stream

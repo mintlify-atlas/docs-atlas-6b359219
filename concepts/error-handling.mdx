@@ -1,0 +1,352 @@
+---
+title: Error Handling
+description: Comprehensive guide to error codes, status checking, and recovery in Jdeflate
+---
+
+Jdeflate provides detailed error reporting through status codes and error enums, enabling robust error handling and recovery in your applications.
+
+## Error Code Enumerations
+
+### Deflator Error Codes
+
+From `jdeflate/deflator.h:64-70`:
+
+```c
+typedef enum {
+    DEFLT_EBADSTATE      = 1,  // Invalid state
+    DEFLT_EOOM           = 2,  // Out of memory
+    DEFLT_ELEVEL         = 3,  // Invalid compression level
+    DEFLT_EINCORRECTUSE  = 4   // Incorrect API usage
+} eDEFLTError;
+```
+
+### Inflator Error Codes
+
+From `jdeflate/inflator.h:56-66`:
+
+```c
+typedef enum {
+    INFLT_EBADSTATE      = 1,  // Invalid state
+    INFLT_EBADCODE       = 2,  // Invalid Huffman code
+    INFLT_EBADTREE       = 3,  // Invalid Huffman tree
+    INFLT_EFAROFFSET     = 4,  // LZ77 offset too far back
+    INFLT_EBADBLOCK      = 5,  // Invalid block type
+    INFLT_EINPUTEND      = 6,  // Unexpected end of input
+    INFLT_EOOM           = 7,  // Out of memory
+    INFLT_EINCORRECTUSE  = 8   // Incorrect API usage
+} eINFLTError;
+```
+
+### ZStrm Error Codes
+
+From `jdeflate/zstrm.h:64-79`:
+
+```c
+typedef enum {
+    ZSTRM_OK            =  0,  // No error
+    ZSTRM_EIOERROR      =  1,  // I/O callback error
+    ZSTRM_EOOM          =  2,  // Out of memory
+    ZSTRM_EBADDATA      =  3,  // Corrupted data
+    ZSTRM_ECHECKSUM     =  4,  // Checksum mismatch
+    ZSTRM_EFORMAT       =  5,  // Invalid format
+    ZSTRM_EMISSINGDICT  =  6,  // Required dictionary missing
+    ZSTRM_ESRCEXHSTD    =  7,  // Source exhausted unexpectedly
+    ZSTRM_ETGTEXHSTD    =  8,  // Target exhausted unexpectedly
+    ZSTRM_EDEFLATE      =  9,  // Deflate/inflate error
+    ZSTRM_EBADDICT      = 10,  // Invalid dictionary
+    ZSTRM_ELIMIT        = 11,  // Size limit exceeded
+    ZSTRM_EINCORRECTUSE = 12   // Incorrect API usage
+} eZSTRMError;
+```
+
+## Checking for Errors
+
+### Result Code Checking
+
+Always check the return value of compression/decompression operations:
+
+```c
+eDEFLTResult result = deflator_deflate(deflator, DEFLT_END);
+
+if (result == DEFLT_ERROR) {
+    // An error occurred
+    eDEFLTError error_code = deflator->error;
+    handle_deflation_error(error_code);
+} else if (result == DEFLT_OK) {
+    // Success - stream complete
+} else if (result == DEFLT_SRCEXHSTD) {
+    // Need more input data
+} else if (result == DEFLT_TGTEXHSTD) {
+    // Need more output space
+}
+```
+
+### State Field Inspection
+
+Both deflator and inflator expose their error state:
+
+```c
+// From jdeflate/deflator.h:80-98
+struct TDeflator {
+    const uint32 state;   // Internal state machine state
+    const uint32 error;   // Error code (0 = no error)
+    const uint32 flags;   // Configuration flags
+    const uint32 flush;   // Current flush mode
+    const uint32 status;  // Last result from deflate call
+    // ... buffer fields
+};
+
+// Check error field directly
+if (deflator->error != 0) {
+    fprintf(stderr, "Deflator error: %u\n", deflator->error);
+}
+```
+
+<Warning>
+The `state` and `error` fields are marked `const` in the public API to prevent direct modification. They should only be read, never written by user code.
+</Warning>
+
+## Common Error Scenarios
+
+### Out of Memory (EOOM)
+
+Occurs during creation or initialization:
+
+```c
+TDeflator* deflator = deflator_create(0, 6, NULL);
+if (deflator == NULL) {
+    // Creation failed - likely out of memory
+    return ERROR_ALLOCATION_FAILED;
+}
+
+if (deflator->error == DEFLT_EOOM) {
+    // Partial initialization failed
+    deflator_destroy(deflator);
+    return ERROR_OUT_OF_MEMORY;
+}
+```
+
+### Incorrect Use (EINCORRECTUSE)
+
+Triggered by API misuse, such as setting source after signaling final:
+
+```c
+// From jdeflate/deflator.h:163-175
+if (CTB_EXPECT0(state->flush)) {
+    if (state->error == 0) {
+        struct TNonConstInflator {
+            uint32 state;
+            uint32 error;
+        }* p;
+        
+        p = (struct TNonConstInflator*) state;
+        p->error = DEFLT_EINCORRECTUSE;
+        p->state = 0xDEADBEEF;  // Poison the state
+    }
+    return;
+}
+```
+
+**Example of incorrect usage:**
+
+```c
+// Wrong: setting source after flush started
+result = deflator_deflate(deflator, DEFLT_END);
+if (result == DEFLT_TGTEXHSTD) {
+    deflator_setsrc(deflator, more_data, size);  // ERROR!
+    // Should only call deflator_settgt() here
+}
+```
+
+<Note>
+When flushing with `DEFLT_FLUSH` or `DEFLT_END`, only set new target buffers, never new source buffers, until the operation returns `DEFLT_OK`.
+</Note>
+
+### Corrupted Data Errors (Inflator)
+
+The inflator reports various data corruption issues:
+
+```c
+eINFLTResult result = inflator_inflate(inflator, final);
+
+if (result == INFLT_ERROR) {
+    switch (inflator->error) {
+        case INFLT_EBADCODE:
+            // Invalid Huffman code encountered
+            fprintf(stderr, "Corrupted compressed data: bad Huffman code\n");
+            break;
+            
+        case INFLT_EBADTREE:
+            // Invalid Huffman tree structure
+            fprintf(stderr, "Corrupted compressed data: bad tree\n");
+            break;
+            
+        case INFLT_EFAROFFSET:
+            // LZ77 back-reference exceeds window
+            fprintf(stderr, "Corrupted compressed data: invalid offset\n");
+            break;
+            
+        case INFLT_EBADBLOCK:
+            // Invalid block type
+            fprintf(stderr, "Corrupted compressed data: bad block type\n");
+            break;
+            
+        case INFLT_EINPUTEND:
+            // Unexpected end of input
+            fprintf(stderr, "Incomplete compressed data\n");
+            break;
+    }
+}
+```
+
+### ZStrm Checksum Errors
+
+```c
+uintxx decompressed = zstrm_inflate(zstrm, target, targetsize);
+
+if (zstrm->error == ZSTRM_ECHECKSUM) {
+    fprintf(stderr, "Checksum verification failed\n");
+    fprintf(stderr, "Expected CRC: 0x%08x\n", expected_crc);
+    fprintf(stderr, "Actual CRC: 0x%08x\n", zstrm->crc);
+}
+```
+
+## Error Recovery Strategies
+
+### Strategy 1: Retry with More Resources
+
+```c
+TDeflator* deflator = deflator_create(0, 9, NULL);
+if (deflator == NULL) {
+    // Try with lower compression level (less memory)
+    deflator = deflator_create(0, 6, NULL);
+    if (deflator == NULL) {
+        // Still failed
+        return ERROR_CANNOT_ALLOCATE;
+    }
+}
+```
+
+### Strategy 2: Reset and Retry
+
+```c
+eDEFLTResult result = deflator_deflate(deflator, DEFLT_END);
+
+if (result == DEFLT_ERROR) {
+    if (deflator->error == DEFLT_EBADSTATE) {
+        // State corrupted, try resetting
+        deflator_reset(deflator);
+        
+        // Restart compression
+        deflator_setsrc(deflator, source, sourcesize);
+        result = deflator_deflate(deflator, DEFLT_END);
+    }
+}
+```
+
+### Strategy 3: Graceful Degradation
+
+```c
+eINFLTResult result = inflator_inflate(inflator, final);
+
+if (result == INFLT_ERROR) {
+    switch (inflator->error) {
+        case INFLT_EINPUTEND:
+            // Partial data - save what we have
+            uintxx partial_bytes = inflator_tgtend(inflator);
+            save_partial_output(target, partial_bytes);
+            return PARTIAL_SUCCESS;
+            
+        case INFLT_EBADCODE:
+        case INFLT_EBADTREE:
+        case INFLT_EFAROFFSET:
+            // Unrecoverable corruption
+            return ERROR_DATA_CORRUPTED;
+    }
+}
+```
+
+### Strategy 4: State Validation
+
+```c
+bool is_deflator_valid(TDeflator* deflator) {
+    return deflator != NULL && 
+           deflator->error == 0 && 
+           deflator->state != 0xDEADBEEF;
+}
+
+if (!is_deflator_valid(deflator)) {
+    fprintf(stderr, "Deflator in invalid state\n");
+    deflator_destroy(deflator);
+    deflator = deflator_create(0, 6, NULL);
+}
+```
+
+<Info>
+The magic value `0xDEADBEEF` is used internally to mark poisoned states after certain errors. Check for this in diagnostic code.
+</Info>
+
+## ZStrm Error State Machine
+
+The `TZStrm` structure maintains a state field:
+
+```c
+typedef enum {
+    ZSTRM_NOTSET   = 0,  // Not initialized
+    ZSTRM_READY    = 1,  // Ready for operation
+    ZSTRM_NEEDDICT = 2,  // Waiting for dictionary
+    ZSTRM_NORMAL   = 3,  // Normal operation
+    ZSTRM_END      = 4   // Stream ended
+} eZSTRMState;
+```
+
+Handle state transitions:
+
+```c
+if (zstrm->state == ZSTRM_NEEDDICT) {
+    if (zstrm->error == ZSTRM_EMISSINGDICT) {
+        // Provide the required dictionary
+        uint8 dict[DICT_SIZE];
+        load_dictionary(dict, zstrm->dictid);
+        zstrm_setdctn(zstrm, dict, DICT_SIZE);
+        
+        // Retry inflation
+        result = zstrm_inflate(zstrm, target, targetsize);
+    }
+}
+```
+
+## Best Practices
+
+1. **Always check return values** from deflate/inflate operations
+2. **Inspect error fields** when result is `DEFLT_ERROR` or `INFLT_ERROR`
+3. **Validate state** before and after critical operations
+4. **Handle allocation failures** at creation time
+5. **Don't ignore API misuse errors** - they indicate bugs in your code
+6. **Log error details** for debugging and monitoring
+
+```c
+// Complete error handling pattern
+eDEFLTResult compress_data(TDeflator* deflator, 
+                           const uint8* src, uintxx srcsize,
+                           uint8* dst, uintxx dstsize,
+                           uintxx* compressed_size) {
+    deflator_setsrc(deflator, src, srcsize);
+    deflator_settgt(deflator, dst, dstsize);
+    
+    eDEFLTResult result = deflator_deflate(deflator, DEFLT_END);
+    
+    if (result == DEFLT_ERROR) {
+        fprintf(stderr, "Deflation failed: error code %u\n", deflator->error);
+        return result;
+    }
+    
+    if (result == DEFLT_TGTEXHSTD) {
+        fprintf(stderr, "Output buffer too small\n");
+        return result;
+    }
+    
+    *compressed_size = deflator_tgtend(deflator);
+    return DEFLT_OK;
+}
+```

@@ -1,0 +1,296 @@
+---
+title: 'zstrm_setsourcefn'
+description: 'Set the source callback function for stream input'
+---
+
+## Function Signature
+
+```c
+void zstrm_setsourcefn(const TZStrm* zstrm, TZStrmIFn fn, void* user);
+```
+
+Sets the source callback function for stream input. The callback will be called when the stream needs more compressed data during decompression. This method cannot be used together with `zstrm_setsource()`.
+
+## Parameters
+
+<ParamField path="zstrm" type="const TZStrm*" required>
+  Pointer to a stream created with `ZSTRM_INFLATE` mode.
+</ParamField>
+
+<ParamField path="fn" type="TZStrmIFn" required>
+  Input callback function with signature:
+  ```c
+  intxx callback(uint8* buffer, uintxx size, void* user);
+  ```
+  
+  The callback should:
+  - Fill `buffer` with up to `size` bytes of compressed data
+  - Return the number of bytes actually read
+  - Return `0` when no more input is available (EOF)
+  - Return `-1` on error
+</ParamField>
+
+<ParamField path="user" type="void*">
+  User-provided context pointer that will be passed to the callback function. Can be `NULL` if not needed.
+</ParamField>
+
+## Return Value
+
+This function does not return a value.
+
+## Callback Function
+
+### TZStrmIFn Signature
+
+```c
+typedef intxx (*TZStrmIFn)(uint8* buffer, uintxx size, void* user);
+```
+
+**Parameters:**
+- `buffer` - Buffer to fill with compressed input data
+- `size` - Maximum number of bytes to read
+- `user` - User context pointer provided to `zstrm_setsourcefn()`
+
+**Return Value:**
+- Number of bytes read (0 to `size`)
+- `0` - No more input available (end of stream)
+- `-1` - Error occurred
+
+## Examples
+
+### File Input Callback
+
+```c
+/* Callback that reads compressed data from a file */
+intxx file_input_callback(uint8* buffer, uintxx size, void* user) {
+    FILE* fp = (FILE*)user;
+    size_t bytes_read = fread(buffer, 1, size, fp);
+    
+    if (ferror(fp)) {
+        return -1;  /* I/O error */
+    }
+    
+    return (intxx)bytes_read;  /* Returns 0 at EOF */
+}
+
+/* Usage */
+FILE* input_file = fopen("data.gz", "rb");
+const TZStrm* zstrm;
+uint8 output_buffer[65536];
+
+if (!input_file) {
+    return -1;
+}
+
+zstrm = zstrm_create(ZSTRM_INFLATE | ZSTRM_GZIP, 0, NULL);
+zstrm_setsourcefn(zstrm, file_input_callback, input_file);
+
+/* Decompress */
+uintxx total = zstrm_inflate(zstrm, output_buffer, sizeof(output_buffer));
+if (zstrm->error) {
+    fprintf(stderr, "Decompression error: %u\n", zstrm->error);
+}
+
+zstrm_destroy(zstrm);
+fclose(input_file);
+```
+
+### Network Stream Input
+
+```c
+typedef struct {
+    int socket_fd;
+    int timeout_ms;
+} NetworkContext;
+
+intxx network_input_callback(uint8* buffer, uintxx size, void* user) {
+    NetworkContext* ctx = (NetworkContext*)user;
+    ssize_t received = recv(ctx->socket_fd, buffer, size, 0);
+    
+    if (received < 0) {
+        return -1;  /* Network error */
+    }
+    
+    return (intxx)received;
+}
+
+/* Usage */
+NetworkContext net_ctx = { .socket_fd = sock, .timeout_ms = 5000 };
+const TZStrm* zstrm;
+uint8 output_buffer[32768];
+
+zstrm = zstrm_create(ZSTRM_INFLATE, 0, NULL);
+zstrm_setsourcefn(zstrm, network_input_callback, &net_ctx);
+
+while (zstrm->state != ZSTRM_END && !zstrm->error) {
+    uintxx n = zstrm_inflate(zstrm, output_buffer, sizeof(output_buffer));
+    if (n > 0) {
+        process_decompressed_data(output_buffer, n);
+    }
+}
+
+zstrm_destroy(zstrm);
+```
+
+### Memory Buffer with Offset Tracking
+
+```c
+typedef struct {
+    const uint8* data;
+    uintxx size;
+    uintxx offset;
+} BufferContext;
+
+intxx buffer_input_callback(uint8* buffer, uintxx size, void* user) {
+    BufferContext* ctx = (BufferContext*)user;
+    uintxx remaining = ctx->size - ctx->offset;
+    
+    if (remaining == 0) {
+        return 0;  /* EOF */
+    }
+    
+    uintxx to_copy = (size < remaining) ? size : remaining;
+    memcpy(buffer, ctx->data + ctx->offset, to_copy);
+    ctx->offset += to_copy;
+    
+    return (intxx)to_copy;
+}
+
+/* Usage */
+BufferContext buf_ctx = {
+    .data = compressed_data,
+    .size = compressed_size,
+    .offset = 0
+};
+const TZStrm* zstrm;
+uint8 output[8192];
+
+zstrm = zstrm_create(ZSTRM_INFLATE, 0, NULL);
+zstrm_setsourcefn(zstrm, buffer_input_callback, &buf_ctx);
+
+uintxx decompressed = zstrm_inflate(zstrm, output, sizeof(output));
+printf("Read %llu bytes from input\n", (unsigned long long)buf_ctx.offset);
+
+zstrm_destroy(zstrm);
+```
+
+### Decompressing Entire Stream
+
+```c
+intxx file_read_callback(uint8* buffer, uintxx size, void* user) {
+    FILE* fp = (FILE*)user;
+    size_t bytes = fread(buffer, 1, size, fp);
+    return ferror(fp) ? -1 : (intxx)bytes;
+}
+
+int decompress_file(const char* input_path, const char* output_path) {
+    FILE* input = fopen(input_path, "rb");
+    FILE* output = fopen(output_path, "wb");
+    const TZStrm* zstrm;
+    uint8 buffer[16384];
+    
+    if (!input || !output) {
+        return -1;
+    }
+    
+    zstrm = zstrm_create(ZSTRM_INFLATE, 0, NULL);
+    zstrm_setsourcefn(zstrm, file_read_callback, input);
+    
+    /* Decompress until stream ends */
+    while (zstrm->state != ZSTRM_END && !zstrm->error) {
+        uintxx n = zstrm_inflate(zstrm, buffer, sizeof(buffer));
+        
+        if (zstrm->error) {
+            fprintf(stderr, "Decompression error: %u\n", zstrm->error);
+            goto error;
+        }
+        
+        if (n > 0) {
+            fwrite(buffer, 1, n, output);
+        }
+    }
+    
+    zstrm_destroy(zstrm);
+    fclose(input);
+    fclose(output);
+    return 0;
+    
+error:
+    zstrm_destroy(zstrm);
+    fclose(input);
+    fclose(output);
+    return -1;
+}
+```
+
+## Notes
+
+<Warning>
+  You cannot use both `zstrm_setsourcefn()` and `zstrm_setsource()` on the same stream. Choose one input method:
+  - Use `zstrm_setsourcefn()` for streaming or callback-based input
+  - Use `zstrm_setsource()` when you have all data in a memory buffer
+</Warning>
+
+<Note>
+  The callback function will be called multiple times during decompression as more input data is needed. Each call should provide as much data as possible (up to `size` bytes) to maximize efficiency.
+</Note>
+
+<Note>
+  The callback must return `0` when no more input is available (EOF), not when temporarily blocked. Returning `0` signals the end of the compressed stream.
+</Note>
+
+<Note>
+  If your callback returns `-1` to indicate an error, the stream's error field will be set to `ZSTRM_EIOERROR`.
+</Note>
+
+## Best Practices
+
+### Error Handling in Callbacks
+
+```c
+intxx robust_input_callback(uint8* buffer, uintxx size, void* user) {
+    FILE* fp = (FILE*)user;
+    
+    /* Clear any previous errors */
+    clearerr(fp);
+    
+    size_t bytes_read = fread(buffer, 1, size, fp);
+    
+    /* Check for read error (not EOF) */
+    if (bytes_read == 0 && ferror(fp)) {
+        return -1;
+    }
+    
+    return (intxx)bytes_read;
+}
+```
+
+### Context Management
+
+```c
+typedef struct {
+    FILE* file;
+    uintxx total_read;
+    int error_code;
+} InputContext;
+
+intxx tracking_input_callback(uint8* buffer, uintxx size, void* user) {
+    InputContext* ctx = (InputContext*)user;
+    size_t bytes = fread(buffer, 1, size, ctx->file);
+    
+    if (ferror(ctx->file)) {
+        ctx->error_code = errno;
+        return -1;
+    }
+    
+    ctx->total_read += bytes;
+    return (intxx)bytes;
+}
+```
+
+## See Also
+
+- [zstrm_setsource](/api/zstrm/zstrm-setsource) - Set input buffer directly
+- [zstrm_inflate](/api/zstrm/zstrm-inflate) - Decompress data
+- [zstrm_settargetfn](/api/zstrm/zstrm-settargetfn) - Set output callback for compression
+- [zstrm_create](/api/zstrm/zstrm-create) - Create a stream

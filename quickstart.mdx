@@ -1,80 +1,521 @@
 ---
-title: "Quickstart"
-description: "Start building awesome documentation in minutes"
+title: Quick Start
+description: Get started with Jdeflate in minutes with complete working examples
 ---
 
-## Get started in three steps
+This guide walks you through your first compression and decompression operations using Jdeflate.
 
-Get your documentation site running locally and make your first customization.
+## Complete Working Example
 
-### Step 1: Set up your local environment
+Here's a complete program that demonstrates both compression and decompression:
 
-<AccordionGroup>
-  <Accordion icon="copy" title="Clone your docs locally">
-    During the onboarding process, you created a GitHub repository with your docs content if you didn't already have one. You can find a link to this repository in your [dashboard](https://dashboard.mintlify.com).
+```c example.c
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <jdeflate/deflator.h>
+#include <jdeflate/inflator.h>
+
+#define CHUNK_SIZE 4096
+
+int main(void) {
+    const char* original = "Hello, Jdeflate! This is a test of compression.";
+    size_t original_size = strlen(original);
     
-    To clone the repository locally so that you can make and preview changes to your docs, follow the [Cloning a repository](https://docs.github.com/en/repositories/creating-and-managing-repositories/cloning-a-repository) guide in the GitHub docs.
-  </Accordion>
-  <Accordion icon="rectangle-terminal" title="Start the preview server">
-    1. Install the Mintlify CLI: `npm i -g mint`
-    2. Navigate to your docs directory and run: `mint dev`
-    3. Open `http://localhost:3000` to see your docs live!
+    /* Buffers for compressed and decompressed data */
+    uint8_t compressed[CHUNK_SIZE];
+    uint8_t decompressed[CHUNK_SIZE];
     
-    <Tip>Your preview updates automatically as you edit files.</Tip>
-  </Accordion>
-</AccordionGroup>
-
-### Step 2: Deploy your changes
-
-<AccordionGroup>
-  <Accordion icon="github" title="Install our GitHub app">
-    Install the Mintlify GitHub app from your [dashboard](https://dashboard.mintlify.com/settings/organization/github-app).
+    /* ===== COMPRESSION ===== */
     
-    Our GitHub app automatically deploys your changes to your docs site, so you don't need to manage deployments yourself.
-</Accordion>
-<Accordion icon="palette" title="Update your site name and colors">
-    For a first change, let's update the name and colors of your docs site.
+    TDeflator* deflator;
+    unsigned int status;
+    
+    /* Create deflator: flags=0, level=6 (balanced), default allocator */
+    deflator = deflator_create(0, 6, NULL);
+    if (deflator == NULL) {
+        fprintf(stderr, "Failed to create deflator\n");
+        return 1;
+    }
+    
+    /* Set source data */
+    deflator_setsrc(deflator, (const uint8_t*)original, original_size);
+    
+    /* Set target buffer */
+    deflator_settgt(deflator, compressed, CHUNK_SIZE);
+    
+    /* Compress (final=1 means this is all the data) */
+    status = deflator_deflate(deflator, 1);
+    
+    if (status != DEFLT_OK) {
+        fprintf(stderr, "Compression failed with status: %u\n", status);
+        deflator_destroy(deflator);
+        return 1;
+    }
+    
+    /* Get the number of compressed bytes */
+    size_t compressed_size = deflator_tgtend(deflator);
+    printf("Original size: %zu bytes\n", original_size);
+    printf("Compressed size: %zu bytes\n", compressed_size);
+    printf("Compression ratio: %.2f%%\n", 
+           (1.0 - (double)compressed_size / original_size) * 100);
+    
+    /* Clean up deflator */
+    deflator_destroy(deflator);
+    
+    /* ===== DECOMPRESSION ===== */
+    
+    TInflator* inflator;
+    
+    /* Create inflator: flags=0, default allocator */
+    inflator = inflator_create(0, NULL);
+    if (inflator == NULL) {
+        fprintf(stderr, "Failed to create inflator\n");
+        return 1;
+    }
+    
+    /* Set compressed data as source */
+    inflator_setsrc(inflator, compressed, compressed_size);
+    
+    /* Set target buffer for decompressed data */
+    inflator_settgt(inflator, decompressed, CHUNK_SIZE);
+    
+    /* Decompress (final=1 means this is all the data) */
+    status = inflator_inflate(inflator, 1);
+    
+    if (status != INFLT_OK) {
+        fprintf(stderr, "Decompression failed with status: %u\n", status);
+        inflator_destroy(inflator);
+        return 1;
+    }
+    
+    /* Get the number of decompressed bytes */
+    size_t decompressed_size = inflator_tgtend(inflator);
+    
+    /* Null-terminate for printing */
+    decompressed[decompressed_size] = '\0';
+    
+    printf("\nDecompressed: %s\n", decompressed);
+    printf("Decompressed size: %zu bytes\n", decompressed_size);
+    
+    /* Verify data integrity */
+    if (decompressed_size == original_size &&
+        memcmp(original, decompressed, original_size) == 0) {
+        printf("\nSuccess! Data matches original.\n");
+    } else {
+        printf("\nError: Data does not match original.\n");
+    }
+    
+    /* Clean up inflator */
+    inflator_destroy(inflator);
+    
+    return 0;
+}
+```
 
-    1. Open `docs.json` in your editor.
-    2. Change the `"name"` field to your project name.
-    3. Update the `"colors"` to match your brand.
-    4. Save and see your changes instantly at `http://localhost:3000`.
+### Compiling and Running
 
-    <Tip>Try changing the primary color to see an immediate difference!</Tip>
-  </Accordion>
-</AccordionGroup>
+<CodeGroup>
 
-### Step 3: Go live
+```bash Using pkg-config
+gcc example.c $(pkg-config --cflags --libs jdeflate) -o example
+./example
+```
 
-<Accordion icon="rocket" title="Publish your docs">
-  1. Commit and push your changes.
-  2. Your docs will update and be live in moments!
-</Accordion>
+```bash Manual (after installation)
+gcc example.c -I/usr/local/include -L/usr/local/lib -ljdeflate -o example
+./example
+```
 
-## Next steps
+```bash Windows (MSVC)
+cl /DJDEFLATE_DLL example.c jdeflate.lib
+example.exe
+```
 
-Now that you have your docs running, explore these key features:
+</CodeGroup>
 
-<CardGroup cols={2}>
+### Expected Output
 
-<Card title="Write Content" icon="pen-to-square" href="/essentials/markdown">
-  Learn MDX syntax and start writing your documentation.
-</Card>
+```
+Original size: 48 bytes
+Compressed size: 40 bytes
+Compression ratio: 16.67%
 
-<Card title="Customize style" icon="palette" href="/essentials/settings">
-  Make your docs match your brand perfectly.
-</Card>
+Decompressed: Hello, Jdeflate! This is a test of compression.
+Decompressed size: 48 bytes
 
-<Card title="Add code examples" icon="square-code" href="/essentials/code">
-  Include syntax-highlighted code blocks.
-</Card>
+Success! Data matches original.
+```
 
-<Card title="API documentation" icon="code" href="/api-reference/introduction">
-  Auto-generate API docs from OpenAPI specs.
-</Card>
+## Understanding the Code
 
-</CardGroup>
+Let's break down the key concepts:
+
+### 1. Including Headers
+
+```c
+#include <jdeflate/deflator.h>
+#include <jdeflate/inflator.h>
+```
+
+Each module is independent. Include only what you need:
+- `deflator.h` - For compression
+- `inflator.h` - For decompression
+- `zstrm.h` - For high-level API (not used in this example)
 
 <Note>
-  **Need help?** See our [full documentation](https://mintlify.com/docs) or join our [community](https://mintlify.com/community).
+For C++ projects, wrap the includes in `extern "C" { ... }`.
 </Note>
+
+### 2. Creating a Compressor
+
+```c
+TDeflator* deflator;
+deflator = deflator_create(0, 6, NULL);
+```
+
+Parameters:
+- **flags** (`0`): Additional options (e.g., `DEFLT_FIXEDCODES` for fixed Huffman codes)
+- **level** (`6`): Compression level 0-9, where:
+  - `0` = No compression (store only)
+  - `1` = Fastest
+  - `6` = Balanced (recommended)
+  - `9` = Best compression
+- **allocator** (`NULL`): Custom memory allocator, or `NULL` for default
+
+### 3. Creating a Decompressor
+
+```c
+TInflator* inflator;
+inflator = inflator_create(0, NULL);
+```
+
+Parameters:
+- **flags** (`0`): Additional options (currently unused, pass `0`)
+- **allocator** (`NULL`): Custom memory allocator, or `NULL` for default
+
+### 4. Setting Buffers
+
+```c
+deflator_setsrc(deflator, source, sourcesize);
+deflator_settgt(deflator, target, targetsize);
+```
+
+These inline functions configure input and output buffers:
+- `setsrc()` - Set source data to compress/decompress
+- `settgt()` - Set target buffer for output
+
+### 5. Processing Data
+
+```c
+status = deflator_deflate(deflator, 1);  /* final=1 */
+status = inflator_inflate(inflator, 1);  /* final=1 */
+```
+
+The `final` parameter indicates whether this is the last chunk:
+- `1` (or `DEFLT_END`) - This is the final data, finish the stream
+- `0` (or `DEFLT_NOFLUSH`) - More data will follow
+
+### 6. Getting Results
+
+```c
+size_t compressed_size = deflator_tgtend(deflator);
+size_t decompressed_size = inflator_tgtend(inflator);
+```
+
+These functions return how many bytes were written to the target buffer.
+
+### 7. Cleanup
+
+```c
+deflator_destroy(deflator);
+inflator_destroy(inflator);
+```
+
+Always free resources when done to prevent memory leaks.
+
+## Stream Processing Example
+
+For larger data that doesn't fit in memory, use streaming:
+
+```c stream_example.c
+#include <stdio.h>
+#include <jdeflate/deflator.h>
+
+#define INPUT_CHUNK 4096
+#define OUTPUT_CHUNK 4096
+
+int compress_file(const char* input_path, const char* output_path) {
+    FILE *input = fopen(input_path, "rb");
+    FILE *output = fopen(output_path, "wb");
+    
+    if (!input || !output) {
+        perror("Failed to open file");
+        return 1;
+    }
+    
+    TDeflator* deflator = deflator_create(0, 6, NULL);
+    if (!deflator) {
+        fprintf(stderr, "Failed to create deflator\n");
+        fclose(input);
+        fclose(output);
+        return 1;
+    }
+    
+    uint8_t input_buffer[INPUT_CHUNK];
+    uint8_t output_buffer[OUTPUT_CHUNK];
+    unsigned int status;
+    size_t bytes_read;
+    int final = 0;
+    
+    do {
+        /* Read input chunk */
+        bytes_read = fread(input_buffer, 1, INPUT_CHUNK, input);
+        if (bytes_read < INPUT_CHUNK) {
+            final = 1;  /* Last chunk */
+        }
+        
+        /* Set source buffer */
+        deflator_setsrc(deflator, input_buffer, bytes_read);
+        
+        /* Process until all input is consumed */
+        do {
+            deflator_settgt(deflator, output_buffer, OUTPUT_CHUNK);
+            
+            status = deflator_deflate(deflator, final);
+            
+            /* Write compressed data */
+            size_t compressed = deflator_tgtend(deflator);
+            fwrite(output_buffer, 1, compressed, output);
+            
+        } while (status == DEFLT_TGTEXHSTD);
+        
+        /* Check for errors */
+        if (status != DEFLT_OK && status != DEFLT_SRCEXHSTD) {
+            fprintf(stderr, "Compression error: %u\n", status);
+            break;
+        }
+        
+    } while (status == DEFLT_SRCEXHSTD);
+    
+    /* Cleanup */
+    deflator_destroy(deflator);
+    fclose(input);
+    fclose(output);
+    
+    return (status == DEFLT_OK) ? 0 : 1;
+}
+
+int main(int argc, char** argv) {
+    if (argc != 3) {
+        fprintf(stderr, "Usage: %s <input> <output>\n", argv[0]);
+        return 1;
+    }
+    
+    return compress_file(argv[1], argv[2]);
+}
+```
+
+### Understanding Return Codes
+
+Both `deflator_deflate()` and `inflator_inflate()` return status codes:
+
+| Return Code | Value | Meaning |
+|-------------|-------|----------|
+| `DEFLT_OK` / `INFLT_OK` | 0 | Success, operation complete |
+| `DEFLT_SRCEXHSTD` / `INFLT_SRCEXHSTD` | 1 | Need more input data |
+| `DEFLT_TGTEXHSTD` / `INFLT_TGTEXHSTD` | 2 | Output buffer full, need more space |
+| `DEFLT_ERROR` / `INFLT_ERROR` | 3 | Error occurred |
+
+### Typical Streaming Pattern
+
+<Steps>
+
+<Step title="Read input chunk">
+
+Read a chunk of data from your source (file, network, etc.):
+
+```c
+bytes_read = fread(input_buffer, 1, CHUNK_SIZE, input_file);
+if (bytes_read < CHUNK_SIZE) {
+    final = 1;  /* This is the last chunk */
+}
+```
+
+</Step>
+
+<Step title="Set source buffer">
+
+```c
+deflator_setsrc(deflator, input_buffer, bytes_read);
+```
+
+</Step>
+
+<Step title="Process until input consumed">
+
+Loop until all input data has been processed:
+
+```c
+do {
+    deflator_settgt(deflator, output_buffer, OUTPUT_CHUNK);
+    status = deflator_deflate(deflator, final);
+    
+    /* Write output */
+    size_t output_size = deflator_tgtend(deflator);
+    fwrite(output_buffer, 1, output_size, output_file);
+    
+} while (status == DEFLT_TGTEXHSTD);
+```
+
+</Step>
+
+<Step title="Continue until done">
+
+```c
+while (status == DEFLT_SRCEXHSTD) {
+    /* Read next chunk and repeat */
+}
+```
+
+</Step>
+
+</Steps>
+
+## Using the High-Level API (zstrm)
+
+For working with zlib or gzip formats, use the high-level `zstrm` API:
+
+```c zstrm_example.c
+#include <stdio.h>
+#include <string.h>
+#include <jdeflate/zstrm.h>
+
+/* Callback to write compressed data */
+intxx write_callback(const uint8* buffer, uintxx size, void* userdata) {
+    FILE* file = (FILE*)userdata;
+    return fwrite(buffer, 1, size, file);
+}
+
+int main(void) {
+    const char* data = "Hello from zstrm! This is gzip compression.";
+    size_t data_size = strlen(data);
+    
+    FILE* output = fopen("output.gz", "wb");
+    if (!output) {
+        perror("Failed to open output file");
+        return 1;
+    }
+    
+    /* Create a GZIP compressor with level 9 */
+    const TZStrm* zstrm = zstrm_create(
+        ZSTRM_DEFLATE | ZSTRM_GZIP, 
+        9, 
+        NULL
+    );
+    
+    if (!zstrm) {
+        fprintf(stderr, "Failed to create zstrm\n");
+        fclose(output);
+        return 1;
+    }
+    
+    /* Set output callback */
+    zstrm_settargetfn(zstrm, write_callback, output);
+    
+    /* Compress data */
+    zstrm_deflate(zstrm, data, data_size);
+    
+    /* Finalize the stream */
+    zstrm_flush(zstrm, 1);
+    
+    if (zstrm->error) {
+        fprintf(stderr, "Compression error: %u\n", zstrm->error);
+        zstrm_destroy(zstrm);
+        fclose(output);
+        return 1;
+    }
+    
+    printf("Compressed %zu bytes to output.gz\n", data_size);
+    printf("Total output: %zu bytes\n", zstrm->total);
+    
+    /* Cleanup */
+    zstrm_destroy(zstrm);
+    fclose(output);
+    
+    return 0;
+}
+```
+
+### Format Options
+
+The `zstrm` API supports three formats:
+
+```c
+/* Raw DEFLATE (no headers or checksums) */
+zstrm_create(ZSTRM_DEFLATE | ZSTRM_DFLT, level, NULL);
+
+/* zlib format (Adler32 checksum) */
+zstrm_create(ZSTRM_DEFLATE | ZSTRM_ZLIB, level, NULL);
+
+/* gzip format (CRC32 checksum) */
+zstrm_create(ZSTRM_DEFLATE | ZSTRM_GZIP, level, NULL);
+
+/* Auto-detect format for decompression */
+zstrm_create(ZSTRM_INFLATE, 0, NULL);
+```
+
+## Error Handling Best Practices
+
+<Warning>
+Always check return values and error states to ensure data integrity.
+</Warning>
+
+```c
+/* Check creation */
+if (deflator == NULL) {
+    /* Handle allocation failure */
+}
+
+/* Check operation status */
+status = deflator_deflate(deflator, final);
+if (status == DEFLT_ERROR) {
+    /* Check error code */
+    printf("Error code: %u\n", deflator->error);
+}
+
+/* For zstrm, check error field */
+if (zstrm->error != ZSTRM_OK) {
+    /* Handle error */
+}
+```
+
+## Common Pitfalls
+
+<Warning>
+Avoid these common mistakes when using Jdeflate:
+</Warning>
+
+1. **Forgetting to destroy objects**: Always call `destroy()` functions to prevent memory leaks
+
+2. **Not checking return values**: Always check status codes - `DEFLT_ERROR` and `INFLT_ERROR` indicate failures
+
+3. **Buffer too small**: Ensure output buffers are large enough. For compression, worst case is input_size + overhead
+
+4. **Mixing APIs**: Don't try to decompress data compressed with `deflator` using `zstrm` with format flags - use matching formats
+
+5. **Reusing without reset**: After processing, either destroy or call `reset()` before reusing
+
+## Next Steps
+
+Now that you understand the basics:
+
+<CardGroup cols={2}>
+  <Card title="API Reference" icon="book" href="/api/deflator/overview">
+    Explore detailed API documentation
+  </Card>
+  
+  <Card title="Examples Repository" icon="github" href="https://github.com/Jpn666/jdeflate-test">
+    See complete examples and test cases
+  </Card>
+</CardGroup>

@@ -1,0 +1,146 @@
+---
+title: Deflator Types & Constants
+description: Type definitions and constants for the Deflator compression interface
+---
+
+## TDeflator
+
+The main deflator state structure that maintains compression state and stream buffers.
+
+```c
+struct TDeflator {
+    const uint32 state;
+    const uint32 error;
+    const uint32 flags;
+    const uint32 flush;
+    const uint32 status;
+    
+    const uint8* source;
+    const uint8* sbgn;
+    const uint8* send;
+    
+    uint8* target;
+    uint8* tbgn;
+    uint8* tend;
+};
+```
+
+### Fields
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `state` | `uint32` | Internal state machine value |
+| `error` | `uint32` | Current error code (see eDEFLTError) |
+| `flags` | `uint32` | Configuration flags (see eDEFLTFlags) |
+| `flush` | `uint32` | Current flush mode |
+| `status` | `uint32` | Last result from deflate call |
+| `source` | `const uint8*` | Current position in source buffer |
+| `sbgn` | `const uint8*` | Beginning of source buffer |
+| `send` | `const uint8*` | End of source buffer |
+| `target` | `uint8*` | Current position in target buffer |
+| `tbgn` | `uint8*` | Beginning of target buffer |
+| `tend` | `uint8*` | End of target buffer |
+
+<Note>
+All fields are const-qualified to prevent direct modification. Use the provided API functions to interact with the deflator state.
+</Note>
+
+## eDEFLTResult
+
+Return codes from the `deflator_deflate()` function indicating the result of a compression operation.
+
+```c
+typedef enum {
+    DEFLT_OK        = 0,
+    DEFLT_SRCEXHSTD = 1,
+    DEFLT_TGTEXHSTD = 2,
+    DEFLT_ERROR     = 3
+} eDEFLTResult;
+```
+
+### Values
+
+| Value | Description |
+|-------|-------------|
+| `DEFLT_OK` | Operation completed successfully |
+| `DEFLT_SRCEXHSTD` | Source buffer exhausted, more input needed |
+| `DEFLT_TGTEXHSTD` | Target buffer exhausted, more output space needed |
+| `DEFLT_ERROR` | An error occurred during compression |
+
+### Usage
+
+When `DEFLT_SRCEXHSTD` is returned, provide more input data by calling `deflator_setsrc()` with a new buffer. When `DEFLT_TGTEXHSTD` is returned, process the compressed data in the target buffer and provide a new target buffer with `deflator_settgt()`.
+
+## eDEFLTFlush
+
+Flush modes that control how the deflator processes and outputs data.
+
+```c
+typedef enum {
+    DEFLT_NOFLUSH = 0,
+    DEFLT_END     = 1,
+    DEFLT_FLUSH   = 2
+} eDEFLTFlush;
+```
+
+### Values
+
+| Value | Description |
+|-------|-------------|
+| `DEFLT_NOFLUSH` | Continue normal compression without flushing |
+| `DEFLT_END` | Finalize the stream and flush all remaining data |
+| `DEFLT_FLUSH` | Flush as much data as possible to the output |
+
+<Note>
+When `DEFLT_FLUSH` or `DEFLT_END` is used, the deflator appends a STORED block type at the end to properly terminate the stream, similar to zlib's Z_SYNC_FLUSH flag. No new source data should be set until the deflator returns `DEFLT_OK`.
+</Note>
+
+## eDEFLTError
+
+Error codes that indicate specific failure conditions during compression.
+
+```c
+typedef enum {
+    DEFLT_EBADSTATE     = 1,
+    DEFLT_EOOM          = 2,
+    DEFLT_ELEVEL        = 3,
+    DEFLT_EINCORRECTUSE = 4
+} eDEFLTError;
+```
+
+### Values
+
+| Value | Description |
+|-------|-------------|
+| `DEFLT_EBADSTATE` | Deflator is in an invalid state |
+| `DEFLT_EOOM` | Out of memory error |
+| `DEFLT_ELEVEL` | Invalid compression level specified |
+| `DEFLT_EINCORRECTUSE` | API was used incorrectly |
+
+<Note>
+The `DEFLT_EINCORRECTUSE` error is triggered when attempting to set new source data while a flush operation is in progress. Always wait for the deflator to return `DEFLT_OK` after flushing before providing new input.
+</Note>
+
+## eDEFLTFlags
+
+Configuration flags that modify deflator behavior.
+
+```c
+typedef enum {
+    DEFLT_FIXEDCODES = 0x01
+} eDEFLTFlags;
+```
+
+### Values
+
+| Value | Description |
+|-------|-------------|
+| `DEFLT_FIXEDCODES` | Use fixed Huffman codes instead of dynamic codes |
+
+### Usage
+
+Fixed Huffman codes can be faster for small data blocks or when compression speed is more important than compression ratio. Pass this flag to `deflator_create()` to enable fixed codes:
+
+```c
+TDeflator* deflator = deflator_create(DEFLT_FIXEDCODES, 6, NULL);
+```

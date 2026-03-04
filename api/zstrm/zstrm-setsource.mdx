@@ -1,0 +1,194 @@
+---
+title: 'zstrm_setsource'
+description: 'Set the source buffer for stream input'
+---
+
+## Function Signature
+
+```c
+void zstrm_setsource(const TZStrm* zstrm, const uint8* source, uintxx size);
+```
+
+Sets the source buffer for stream input. This provides the compressed data for decompression operations. This method cannot be used together with `zstrm_setsourcefn()`.
+
+## Parameters
+
+<ParamField path="zstrm" type="const TZStrm*" required>
+  Pointer to a stream created with `ZSTRM_INFLATE` mode.
+</ParamField>
+
+<ParamField path="source" type="const uint8*" required>
+  Pointer to the buffer containing compressed input data.
+</ParamField>
+
+<ParamField path="size" type="uintxx" required>
+  Size of the source buffer in bytes.
+</ParamField>
+
+## Return Value
+
+This function does not return a value.
+
+## Examples
+
+### Basic Decompression from Buffer
+
+```c
+const TZStrm* zstrm;
+uint8* compressed_data;  /* Contains gzip-compressed data */
+uintxx compressed_size = 1024;
+uint8 output_buffer[4096];
+
+/* Create decompressor */
+zstrm = zstrm_create(ZSTRM_INFLATE, 0, NULL);
+if (zstrm == NULL) {
+    return -1;
+}
+
+/* Set the source buffer */
+zstrm_setsource(zstrm, compressed_data, compressed_size);
+
+/* Decompress */
+uintxx decompressed = zstrm_inflate(zstrm, output_buffer, sizeof(output_buffer));
+if (zstrm->error) {
+    fprintf(stderr, "Decompression error: %u\n", zstrm->error);
+    zstrm_destroy(zstrm);
+    return -1;
+}
+
+printf("Decompressed %llu bytes\n", (unsigned long long)decompressed);
+zstrm_destroy(zstrm);
+```
+
+### Decompress Data Read from File
+
+```c
+FILE* fp = fopen("data.gz", "rb");
+const TZStrm* zstrm;
+uint8* compressed_buffer;
+uintxx compressed_size;
+uint8 output_buffer[65536];
+
+/* Read entire compressed file into memory */
+fseek(fp, 0, SEEK_END);
+compressed_size = ftell(fp);
+fseek(fp, 0, SEEK_SET);
+
+compressed_buffer = malloc(compressed_size);
+fread(compressed_buffer, 1, compressed_size, fp);
+fclose(fp);
+
+/* Decompress */
+zstrm = zstrm_create(ZSTRM_INFLATE | ZSTRM_GZIP, 0, NULL);
+zstrm_setsource(zstrm, compressed_buffer, compressed_size);
+
+uintxx total = zstrm_inflate(zstrm, output_buffer, sizeof(output_buffer));
+
+if (zstrm->error) {
+    fprintf(stderr, "Error: %u\n", zstrm->error);
+}
+
+free(compressed_buffer);
+zstrm_destroy(zstrm);
+```
+
+### Decompress Multiple Times from Same Buffer
+
+```c
+const TZStrm* zstrm;
+uint8 compressed_data[2048];
+uintxx compressed_size;
+uint8 output_buffer[8192];
+uintxx total_decompressed = 0;
+
+zstrm = zstrm_create(ZSTRM_INFLATE, 0, NULL);
+zstrm_setsource(zstrm, compressed_data, compressed_size);
+
+/* Decompress in multiple calls until stream ends */
+while (zstrm->state != ZSTRM_END && !zstrm->error) {
+    uintxx n = zstrm_inflate(zstrm, output_buffer, sizeof(output_buffer));
+    
+    if (n > 0) {
+        /* Process decompressed data */
+        process_data(output_buffer, n);
+        total_decompressed += n;
+    }
+}
+
+if (zstrm->error) {
+    fprintf(stderr, "Decompression failed after %llu bytes\n", 
+            (unsigned long long)total_decompressed);
+}
+
+zstrm_destroy(zstrm);
+```
+
+### Check Bytes Consumed
+
+```c
+const TZStrm* zstrm;
+uint8 compressed_data[2048];
+uintxx compressed_size = 1500;
+uint8 output_buffer[8192];
+
+zstrm = zstrm_create(ZSTRM_INFLATE, 0, NULL);
+zstrm_setsource(zstrm, compressed_data, compressed_size);
+
+uintxx decompressed = zstrm_inflate(zstrm, output_buffer, sizeof(output_buffer));
+
+if (!zstrm->error) {
+    printf("Decompressed %llu bytes\n", (unsigned long long)decompressed);
+    printf("Consumed %llu bytes from input\n", (unsigned long long)zstrm->usedinput);
+    
+    /* If there's unconsumed data, it might be additional streams or trailing data */
+    if (zstrm->usedinput < compressed_size) {
+        printf("Warning: %llu bytes of input not consumed\n",
+               (unsigned long long)(compressed_size - zstrm->usedinput));
+    }
+}
+
+zstrm_destroy(zstrm);
+```
+
+## Notes
+
+<Warning>
+  You cannot use both `zstrm_setsource()` and `zstrm_setsourcefn()` on the same stream. Choose one input method:
+  - Use `zstrm_setsource()` when you have all compressed data in memory
+  - Use `zstrm_setsourcefn()` for streaming or when data comes from callbacks
+</Warning>
+
+<Note>
+  The source buffer must remain valid for the entire duration of decompression operations. Do not free or modify the buffer until you're done with all `zstrm_inflate()` calls or have destroyed the stream.
+</Note>
+
+<Note>
+  Use the `zstrm->usedinput` field to determine how many bytes from the source buffer were consumed. This is useful when the buffer contains multiple streams or additional trailing data.
+</Note>
+
+<Note>
+  If you need to decompress from a different buffer, you can call `zstrm_reset()` and then `zstrm_setsource()` again with the new buffer.
+</Note>
+
+## Use Cases
+
+### When to Use `zstrm_setsource()`
+
+- You have the entire compressed data in memory
+- You're decompressing small to medium-sized data
+- You want simpler code without callback functions
+- The compressed data is from a memory buffer, not a stream
+
+### When to Use `zstrm_setsourcefn()` Instead
+
+- You're decompressing from a file or network stream
+- The compressed data is too large to fit in memory
+- You need to decompress data as it arrives
+- You want to avoid loading all data upfront
+
+## See Also
+
+- [zstrm_setsourcefn](/api/zstrm/zstrm-setsourcefn) - Set input callback function
+- [zstrm_inflate](/api/zstrm/zstrm-inflate) - Decompress data
+- [zstrm_reset](/api/zstrm/zstrm-reset) - Reset stream for reuse
+- [zstrm_create](/api/zstrm/zstrm-create) - Create a stream

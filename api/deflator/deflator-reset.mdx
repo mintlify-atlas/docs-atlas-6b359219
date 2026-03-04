@@ -1,0 +1,200 @@
+---
+title: 'deflator_reset'
+description: 'Reset the deflator instance to its initial state'
+---
+
+## Function Signature
+
+```c
+void deflator_reset(TDeflator*);
+```
+
+Resets the deflator instance to its initial state, allowing it to be reused for compressing new data without needing to destroy and recreate it.
+
+## Parameters
+
+<ParamField path="state" type="TDeflator*" required>
+  Pointer to the deflator instance to reset.
+</ParamField>
+
+## Return Value
+
+This function does not return a value.
+
+## What Gets Reset
+
+Calling `deflator_reset()` resets:
+- Internal compression state
+- Stream buffers (source and target pointers)
+- Error state
+- Flush state
+- Dictionary (if one was set)
+
+## What Stays the Same
+
+The following are preserved:
+- Compression level
+- Flags (e.g., `DEFLT_FIXEDCODES`)
+- Memory allocator
+
+## Usage Example
+
+### Reusing a Deflator for Multiple Files
+
+```c
+#include <jdeflate/deflator.h>
+#include <stdio.h>
+
+// Create deflator once
+TDeflator* deflator = deflator_create(0, 6, NULL);
+if (!deflator) {
+    fprintf(stderr, "Failed to create deflator\n");
+    return -1;
+}
+
+const char* files[] = {"file1.txt", "file2.txt", "file3.txt"};
+
+for (int i = 0; i < 3; i++) {
+    // Reset for each new file
+    if (i > 0) {
+        deflator_reset(deflator);
+    }
+    
+    // Compress the file
+    FILE* in = fopen(files[i], "rb");
+    FILE* out = fopen("compressed.dat", "wb");
+    
+    compress_file(deflator, in, out);
+    
+    fclose(in);
+    fclose(out);
+}
+
+// Clean up once at the end
+deflator_destroy(deflator);
+```
+
+### Performance Optimization
+
+```c
+// Instead of create/destroy for each file (SLOW)
+for (int i = 0; i < num_files; i++) {
+    TDeflator* deflator = deflator_create(0, 6, NULL);
+    compress_file(deflator, files[i]);
+    deflator_destroy(deflator);
+}
+
+// Use reset for better performance (FAST)
+TDeflator* deflator = deflator_create(0, 6, NULL);
+for (int i = 0; i < num_files; i++) {
+    if (i > 0) deflator_reset(deflator);
+    compress_file(deflator, files[i]);
+}
+deflator_destroy(deflator);
+```
+
+### Resetting After Error
+
+```c
+eDEFLTResult result = deflator_deflate(deflator, DEFLT_NOFLUSH);
+
+if (result == DEFLT_ERROR) {
+    fprintf(stderr, "Error occurred: %u\n", deflator->error);
+    
+    // Reset to clear error state and try again
+    deflator_reset(deflator);
+    
+    // Now safe to start a new compression operation
+    deflator_setsrc(deflator, new_source, new_size);
+    // ...
+}
+```
+
+### Resetting with New Dictionary
+
+```c
+const uint8* dict1 = get_dictionary_for_json();
+const uint8* dict2 = get_dictionary_for_xml();
+
+TDeflator* deflator = deflator_create(0, 6, NULL);
+
+// Compress JSON data with JSON dictionary
+deflator_setdctnr(deflator, dict1, dict1_size);
+compress_json_data(deflator);
+
+// Reset and switch to XML dictionary
+deflator_reset(deflator);
+deflator_setdctnr(deflator, dict2, dict2_size);
+compress_xml_data(deflator);
+
+deflator_destroy(deflator);
+```
+
+### Batch Processing
+
+```c
+#include <jdeflate/deflator.h>
+
+int compress_multiple_buffers(uint8** buffers, size_t* sizes, int count) {
+    TDeflator* deflator = deflator_create(0, 6, NULL);
+    if (!deflator) return -1;
+    
+    uint8 output[8192];
+    
+    for (int i = 0; i < count; i++) {
+        // Reset before each new buffer (except first)
+        if (i > 0) {
+            deflator_reset(deflator);
+        }
+        
+        // Compress this buffer
+        deflator_setsrc(deflator, buffers[i], sizes[i]);
+        
+        eDEFLTResult result;
+        do {
+            deflator_settgt(deflator, output, sizeof(output));
+            result = deflator_deflate(deflator, DEFLT_END);
+            
+            uintxx written = deflator_tgtend(deflator);
+            process_output(output, written, i);
+            
+        } while (result == DEFLT_TGTEXHSTD);
+        
+        if (result == DEFLT_ERROR) {
+            fprintf(stderr, "Error compressing buffer %d\n", i);
+            deflator_destroy(deflator);
+            return -1;
+        }
+    }
+    
+    deflator_destroy(deflator);
+    return 0;
+}
+```
+
+## When to Use Reset
+
+Use `deflator_reset()` when:
+
+- Compressing multiple independent data streams
+- Recovering from errors
+- Reusing a deflator in a long-running application
+- Optimizing performance by avoiding repeated allocation/deallocation
+
+<Note>
+`deflator_reset()` is more efficient than destroying and recreating a deflator because it avoids memory allocation overhead.
+</Note>
+
+## When Not to Use Reset
+
+Do **not** use `deflator_reset()` if you need to:
+
+- Change compression level (create a new deflator instead)
+- Change flags like `DEFLT_FIXEDCODES` (create a new deflator instead)
+- Continue compressing the same stream (just keep using the deflator)
+
+## Related Functions
+
+- [`deflator_create()`](/api/deflator/deflator-create) - Create a new deflator instance
+- [`deflator_destroy()`](/api/deflator/deflator-destroy) - Destroy a deflator instance
+- [`deflator_setdctnr()`](/api/deflator/deflator-setdctnr) - Set a new dictionary after reset

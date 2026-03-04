@@ -1,0 +1,259 @@
+---
+title: "inflator_reset"
+description: "Reset an inflator instance to its initial state for reuse"
+---
+
+## Function Signature
+
+```c
+void inflator_reset(TInflator* state);
+```
+
+Resets an inflator instance to its initial state, allowing it to be reused for decompressing a new DEFLATE stream without destroying and recreating the inflator.
+
+## Parameters
+
+<ParamField path="state" type="TInflator*">
+  Pointer to the inflator instance to reset. Must not be `NULL`.
+</ParamField>
+
+## Return Value
+
+This function does not return a value.
+
+## Usage Example
+
+```c
+#include <jdeflate/inflator.h>
+
+// Decompress multiple streams using the same inflator
+int decompress_multiple_files(const char** files, int count)
+{
+    TInflator* inflator = inflator_create(0, NULL);
+    if (!inflator) {
+        return -1;
+    }
+
+    uint8 in_buffer[8192];
+    uint8 out_buffer[16384];
+
+    for (int i = 0; i < count; i++) {
+        // Reset for each new file
+        if (i > 0) {
+            inflator_reset(inflator);
+        }
+
+        // Load and decompress the file
+        FILE* fp = fopen(files[i], "rb");
+        size_t bytes_read = fread(in_buffer, 1, sizeof(in_buffer), fp);
+        fclose(fp);
+
+        inflator_setsrc(inflator, in_buffer, bytes_read);
+        inflator_settgt(inflator, out_buffer, sizeof(out_buffer));
+        
+        eINFLTResult result = inflator_inflate(inflator, 1);
+        
+        if (result != INFLT_OK && result != INFLT_TGTEXHSTD) {
+            fprintf(stderr, "Failed to decompress %s\n", files[i]);
+            inflator_destroy(inflator);
+            return -1;
+        }
+
+        // Process decompressed data...
+        uintxx decompressed = inflator_tgtend(inflator);
+        printf("Decompressed %s: %llu bytes\n", files[i], decompressed);
+    }
+
+    inflator_destroy(inflator);
+    return 0;
+}
+```
+
+## Streaming Multiple Files Example
+
+```c
+#include <jdeflate/inflator.h>
+#include <stdio.h>
+
+#define CHUNK_SIZE 16384
+
+int decompress_file(TInflator* inflator, const char* filename)
+{
+    FILE* fp = fopen(filename, "rb");
+    if (!fp) return -1;
+
+    uint8 in_buf[CHUNK_SIZE];
+    uint8 out_buf[CHUNK_SIZE];
+    eINFLTResult result;
+    int final = 0;
+
+    do {
+        size_t bytes_read = fread(in_buf, 1, CHUNK_SIZE, fp);
+        if (bytes_read == 0) break;
+        
+        if (bytes_read < CHUNK_SIZE || feof(fp)) {
+            final = 1;
+        }
+
+        inflator_setsrc(inflator, in_buf, bytes_read);
+
+        do {
+            inflator_settgt(inflator, out_buf, CHUNK_SIZE);
+            result = inflator_inflate(inflator, final);
+
+            uintxx written = inflator_tgtend(inflator);
+            // Process output...
+            fwrite(out_buf, 1, written, stdout);
+
+        } while (result == INFLT_TGTEXHSTD);
+
+        if (result == INFLT_ERROR) {
+            fprintf(stderr, "Error: %u\n", inflator->error);
+            fclose(fp);
+            return -1;
+        }
+
+    } while (result == INFLT_SRCEXHSTD);
+
+    fclose(fp);
+    return (result == INFLT_OK) ? 0 : -1;
+}
+
+int main(void)
+{
+    TInflator* inflator = inflator_create(0, NULL);
+    
+    // Decompress multiple files with the same inflator
+    const char* files[] = {"file1.deflate", "file2.deflate", "file3.deflate"};
+    
+    for (int i = 0; i < 3; i++) {
+        if (i > 0) {
+            inflator_reset(inflator);  // Reset between files
+        }
+        
+        printf("Decompressing %s...\n", files[i]);
+        if (decompress_file(inflator, files[i]) != 0) {
+            fprintf(stderr, "Failed to decompress %s\n", files[i]);
+        }
+    }
+    
+    inflator_destroy(inflator);
+    return 0;
+}
+```
+
+## Reset After Error
+
+```c
+#include <jdeflate/inflator.h>
+
+// Recover from errors by resetting
+int decompress_with_retry(TInflator* inflator,
+                          const uint8* data, uintxx size,
+                          uint8* output, uintxx out_size)
+{
+    inflator_setsrc(inflator, data, size);
+    inflator_settgt(inflator, output, out_size);
+    
+    eINFLTResult result = inflator_inflate(inflator, 1);
+    
+    if (result == INFLT_ERROR) {
+        fprintf(stderr, "Error occurred: %u\n", inflator->error);
+        
+        // Reset and potentially retry with different parameters
+        inflator_reset(inflator);
+        
+        // Could try again with a different approach
+        // ...
+        
+        return -1;
+    }
+    
+    return 0;
+}
+```
+
+## Reusing with Different Dictionaries
+
+```c
+#include <jdeflate/inflator.h>
+
+int decompress_with_different_dicts(
+    TInflator* inflator,
+    const uint8* dict1, uintxx dict1_size,
+    const uint8* data1, uintxx data1_size,
+    const uint8* dict2, uintxx dict2_size,
+    const uint8* data2, uintxx data2_size)
+{
+    uint8 output[32768];
+
+    // First stream with first dictionary
+    inflator_setdctnr(inflator, dict1, dict1_size);
+    inflator_setsrc(inflator, data1, data1_size);
+    inflator_settgt(inflator, output, sizeof(output));
+    eINFLTResult result = inflator_inflate(inflator, 1);
+    
+    if (result != INFLT_OK) {
+        return -1;
+    }
+    
+    // Process first output...
+    printf("First stream: %llu bytes\n", inflator_tgtend(inflator));
+
+    // Reset for second stream
+    inflator_reset(inflator);
+    
+    // Second stream with second dictionary
+    inflator_setdctnr(inflator, dict2, dict2_size);
+    inflator_setsrc(inflator, data2, data2_size);
+    inflator_settgt(inflator, output, sizeof(output));
+    result = inflator_inflate(inflator, 1);
+    
+    if (result != INFLT_OK) {
+        return -1;
+    }
+    
+    // Process second output...
+    printf("Second stream: %llu bytes\n", inflator_tgtend(inflator));
+    
+    return 0;
+}
+```
+
+## Notes
+
+<Note>
+- `inflator_reset()` is more efficient than destroying and creating a new inflator because it reuses allocated memory.
+- After reset, the inflator is in the same state as a newly created inflator.
+- All previous state is cleared, including any error codes.
+- You can set a new dictionary after reset if needed.
+- The inflator's allocator and flags remain unchanged.
+</Note>
+
+<Warning>
+- Do not call `inflator_reset()` while in the middle of decompressing a stream. Wait until the stream is complete or an error occurs.
+- After reset, you must set new source and target buffers before calling `inflator_inflate()` again.
+</Warning>
+
+## Performance Benefits
+
+Reusing an inflator with `inflator_reset()` provides several benefits:
+
+1. **Reduced allocations**: Avoids freeing and reallocating internal buffers
+2. **Better cache locality**: Memory structures remain in cache
+3. **Simpler code**: No need to manage multiple inflator instances
+4. **Lower overhead**: No destructor/constructor overhead per stream
+
+## Common Use Cases
+
+- **Batch processing**: Decompressing multiple files in sequence
+- **Server applications**: Handling multiple requests with a pool of inflators
+- **Streaming protocols**: Processing multiple DEFLATE streams in a session
+- **Error recovery**: Resetting after encountering corrupted data
+
+## See Also
+
+- [inflator_create()](/api/inflator/inflator-create) - Create an inflator instance
+- [inflator_destroy()](/api/inflator/inflator-destroy) - Destroy an inflator instance
+- [inflator_setdctnr()](/api/inflator/inflator-setdctnr) - Set a dictionary after reset
+- [Inflator Overview](/api/inflator/overview) - Complete workflow

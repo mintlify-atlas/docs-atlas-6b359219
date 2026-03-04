@@ -1,0 +1,388 @@
+---
+title: Installation
+description: Build and install Jdeflate using the Meson build system
+---
+
+## System Requirements
+
+Before building Jdeflate, ensure you have the following installed:
+
+### Required
+
+- **C99-compliant compiler** (GCC, Clang, MSVC, or compatible)
+- **Python 3.7 or newer**
+- **Meson build system** (0.55.0 or newer)
+- **Ninja build system**
+
+### Optional
+
+- **NASM** (Netwide Assembler) - For optimized x86-64 assembly implementations of CRC32 and Adler32 checksums
+
+<Note>
+If NASM is not available, Jdeflate will automatically fall back to C implementations. The library will work correctly either way, but assembly versions offer better performance.
+</Note>
+
+## Installing Build Tools
+
+<CodeGroup>
+
+```bash Python Package Manager
+# Install Meson and Ninja using pip
+pip3 install meson ninja
+```
+
+```bash Ubuntu/Debian
+# Install from system package manager
+sudo apt-get update
+sudo apt-get install meson ninja-build python3
+
+# Optional: Install NASM for assembly optimizations
+sudo apt-get install nasm
+```
+
+```bash Fedora/RHEL
+# Install from system package manager
+sudo dnf install meson ninja-build python3
+
+# Optional: Install NASM
+sudo dnf install nasm
+```
+
+```bash macOS
+# Install using Homebrew
+brew install meson ninja python3
+
+# Optional: Install NASM
+brew install nasm
+```
+
+```bash Arch Linux
+# Install from system package manager
+sudo pacman -S meson ninja python
+
+# Optional: Install NASM
+sudo pacman -S nasm
+```
+
+</CodeGroup>
+
+For other platforms, refer to the [Meson installation guide](https://mesonbuild.com/Getting-meson.html).
+
+## Building from Source
+
+<Steps>
+
+<Step title="Clone the repository">
+
+First, get the Jdeflate source code:
+
+```bash
+git clone https://github.com/Jpn666/jdeflate.git
+cd jdeflate
+```
+
+</Step>
+
+<Step title="Configure the build">
+
+Create a build directory and configure the project:
+
+```bash
+meson setup builddir
+```
+
+This creates a `builddir` directory with the build configuration. Meson will automatically detect your compiler and configure optimal settings.
+
+<Note>
+The default build type is `debug`. For production use, you'll want to configure a release build (see Build Options below).
+</Note>
+
+</Step>
+
+<Step title="Compile the library">
+
+Build the project using Ninja:
+
+```bash
+meson compile -C builddir
+```
+
+This compiles the library and places the output in `builddir/`.
+
+</Step>
+
+<Step title="Install (optional)">
+
+To install the library system-wide:
+
+```bash
+sudo meson install -C builddir
+```
+
+This installs:
+- Library files to the appropriate lib directory
+- Header files to the include directory
+- pkg-config files for easy integration
+
+<Warning>
+On most systems, this requires root/administrator privileges.
+</Warning>
+
+</Step>
+
+</Steps>
+
+## Build Options
+
+You can customize the build using Meson's configuration options:
+
+### Library Type
+
+Choose between static or shared library:
+
+<CodeGroup>
+
+```bash Static Library
+meson setup builddir --default-library=static
+```
+
+```bash Shared Library
+meson setup builddir --default-library=shared
+```
+
+```bash Both
+meson setup builddir --default-library=both
+```
+
+</CodeGroup>
+
+<Note>
+The default is `shared`. When building as a shared library on Windows (MSVC), consumers must define `JDEFLATE_DLL` when including Jdeflate headers.
+</Note>
+
+### Build Type
+
+Control optimization and debug symbols:
+
+<CodeGroup>
+
+```bash Release
+# Optimized for production use
+meson setup builddir --buildtype=release
+```
+
+```bash Debug
+# No optimization, full debug symbols
+meson setup builddir --buildtype=debug
+```
+
+```bash Debug Optimized
+# Balanced: optimizations + debug symbols
+meson setup builddir --buildtype=debugoptimized
+```
+
+```bash Plain
+# No special flags
+meson setup builddir --buildtype=plain
+```
+
+</CodeGroup>
+
+### Combining Options
+
+You can combine multiple options:
+
+```bash
+meson setup builddir \
+  --default-library=static \
+  --buildtype=release \
+  --prefix=/usr/local
+```
+
+### Reconfiguring an Existing Build
+
+To change options on an existing build directory:
+
+```bash
+meson configure builddir --default-library=static --buildtype=release
+meson compile -C builddir
+```
+
+## Build Output
+
+After a successful build, you'll find:
+
+<CodeGroup>
+
+```bash Linux
+# Static library
+builddir/libjdeflate.a
+
+# Shared library
+builddir/libjdeflate.so
+builddir/libjdeflate.so.1  # Versioned symlink
+```
+
+```bash macOS
+# Static library
+builddir/libjdeflate.a
+
+# Shared library
+builddir/libjdeflate.dylib
+builddir/libjdeflate.1.dylib  # Versioned
+```
+
+```bash Windows
+# Static library
+builddir/jdeflate.lib
+
+# Shared library (DLL)
+builddir/jdeflate.dll
+builddir/jdeflate.lib  # Import library
+```
+
+</CodeGroup>
+
+## Using as a Meson Subproject
+
+Jdeflate can be integrated into your Meson project as a subproject:
+
+<Steps>
+
+<Step title="Create subprojects directory">
+
+```bash
+mkdir -p subprojects
+```
+
+</Step>
+
+<Step title="Add Jdeflate as a subproject">
+
+Create `subprojects/jdeflate.wrap`:
+
+```ini
+[wrap-git]
+url = https://github.com/Jpn666/jdeflate.git
+revision = head
+depth = 1
+```
+
+</Step>
+
+<Step title="Use in your meson.build">
+
+```python
+project('myproject', 'c')
+
+# Get Jdeflate dependency
+jdeflate_dep = dependency('jdeflate', 
+  fallback: ['jdeflate', 'jdeflate_dep']
+)
+
+# Use in your executable or library
+executable('myapp',
+  'src/main.c',
+  dependencies: jdeflate_dep
+)
+```
+
+</Step>
+
+</Steps>
+
+Meson will automatically download and build Jdeflate as part of your project's build process.
+
+## Using with pkg-config
+
+After installing Jdeflate, you can use pkg-config to get compiler and linker flags:
+
+```bash
+# Get compiler flags
+pkg-config --cflags jdeflate
+
+# Get linker flags
+pkg-config --libs jdeflate
+
+# Check installed version
+pkg-config --modversion jdeflate
+```
+
+### Example: Manual Compilation
+
+```bash
+# Compile and link manually
+gcc myapp.c $(pkg-config --cflags --libs jdeflate) -o myapp
+```
+
+### Example: In a Makefile
+
+```makefile
+CFLAGS = $(shell pkg-config --cflags jdeflate)
+LDFLAGS = $(shell pkg-config --libs jdeflate)
+
+myapp: main.o
+	$(CC) -o $@ $^ $(LDFLAGS)
+
+main.o: main.c
+	$(CC) -c $(CFLAGS) $< -o $@
+```
+
+## Platform-Specific Notes
+
+### Windows (MSVC)
+
+When using Jdeflate as a shared library (DLL) on Windows with MSVC, you must define the `JDEFLATE_DLL` macro:
+
+```c
+#define JDEFLATE_DLL
+#include <jdeflate/deflator.h>
+#include <jdeflate/inflator.h>
+```
+
+Or pass it as a compiler flag:
+
+```bash
+cl /DJDEFLATE_DLL myapp.c jdeflate.lib
+```
+
+<Warning>
+Failure to define `JDEFLATE_DLL` when using the shared library will result in linker errors.
+</Warning>
+
+### x86-64 Assembly Optimizations
+
+On x86-64 systems, Jdeflate can use optimized assembly implementations for CRC32 and Adler32 checksums:
+
+- **Supported on**: Windows, Linux, macOS, BSD variants
+- **Requires**: NASM assembler
+- **Automatic**: If NASM is detected during build, assembly versions are used automatically
+- **Fallback**: If NASM is not available, C implementations are used instead
+
+You can verify if assembly optimizations are enabled by checking the build output:
+
+```bash
+meson setup builddir
+# Look for: "Program nasm found: YES"
+```
+
+## Verifying Installation
+
+After installation, verify that Jdeflate is correctly installed:
+
+```bash
+# Check if headers are accessible
+ls /usr/local/include/jdeflate/
+
+# Verify pkg-config can find it
+pkg-config --exists jdeflate && echo "Jdeflate found"
+
+# Display version
+pkg-config --modversion jdeflate
+```
+
+## Next Steps
+
+<Card title="Quick Start Guide" icon="rocket" href="/quickstart">
+  Jump into a complete working example to start using Jdeflate
+</Card>

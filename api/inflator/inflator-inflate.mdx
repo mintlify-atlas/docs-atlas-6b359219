@@ -1,0 +1,194 @@
+---
+title: "inflator_inflate"
+description: "Perform DEFLATE decompression on the current source and target buffers"
+---
+
+## Function Signature
+
+```c
+eINFLTResult inflator_inflate(TInflator* state, uint32 final);
+```
+
+Performs DEFLATE decompression, reading from the source buffer and writing to the target buffer. This is the core function of the Inflator API.
+
+## Parameters
+
+<ParamField path="state" type="TInflator*">
+  Pointer to the inflator instance. Must be initialized with `inflator_create()` and have source and target buffers set.
+</ParamField>
+
+<ParamField path="final" type="uint32">
+  Flag indicating whether this is the last chunk of input data:
+  - `0`: More input data will follow
+  - `non-zero`: This is the final chunk of input
+  
+  <Warning>
+  Once you set `final` to a non-zero value, you cannot call `inflator_setsrc()` again. Doing so will result in an `INFLT_EINCORRECTUSE` error.
+  </Warning>
+</ParamField>
+
+## Return Value
+
+Returns an `eINFLTResult` value indicating the result of the inflation operation:
+
+<ResponseField name="INFLT_OK" type="0">
+  Inflation completed successfully. All input has been processed and the stream is complete.
+</ResponseField>
+
+<ResponseField name="INFLT_SRCEXHSTD" type="1">
+  Source buffer exhausted. Call `inflator_setsrc()` to provide more input data, then call `inflator_inflate()` again.
+</ResponseField>
+
+<ResponseField name="INFLT_TGTEXHSTD" type="2">
+  Target buffer exhausted. Call `inflator_settgt()` to provide a new output buffer, then call `inflator_inflate()` again with the same `final` value.
+</ResponseField>
+
+<ResponseField name="INFLT_ERROR" type="3">
+  An error occurred. Check `state->error` for the specific error code (see `eINFLTError`).
+</ResponseField>
+
+## Usage Example
+
+```c
+#include <jdeflate/inflator.h>
+#include <stdio.h>
+
+#define CHUNK_SIZE 16384
+
+int decompress_file(FILE* input, FILE* output) {
+    TInflator* inflator = inflator_create(0, NULL);
+    if (!inflator) {
+        return -1;
+    }
+
+    uint8 in_buffer[CHUNK_SIZE];
+    uint8 out_buffer[CHUNK_SIZE];
+    eINFLTResult result;
+    int final = 0;
+
+    do {
+        // Read input chunk
+        size_t bytes_read = fread(in_buffer, 1, CHUNK_SIZE, input);
+        if (bytes_read < CHUNK_SIZE) {
+            final = 1;  // Last chunk
+        }
+
+        inflator_setsrc(inflator, in_buffer, bytes_read);
+
+        do {
+            inflator_settgt(inflator, out_buffer, CHUNK_SIZE);
+            result = inflator_inflate(inflator, final);
+
+            // Write decompressed data
+            uintxx decompressed = inflator_tgtend(inflator);
+            fwrite(out_buffer, 1, decompressed, output);
+
+        } while (result == INFLT_TGTEXHSTD);
+
+    } while (result == INFLT_SRCEXHSTD);
+
+    // Check final result
+    if (result == INFLT_ERROR) {
+        fprintf(stderr, "Inflation error: %u\n", inflator->error);
+        inflator_destroy(inflator);
+        return -1;
+    }
+
+    inflator_destroy(inflator);
+    return 0;
+}
+```
+
+## Simple Single-Buffer Example
+
+```c
+#include <jdeflate/inflator.h>
+
+// Decompress data that fits in single buffers
+int simple_decompress(const uint8* compressed, uintxx comp_size,
+                      uint8* output, uintxx out_size,
+                      uintxx* bytes_written)
+{
+    TInflator* inflator = inflator_create(0, NULL);
+    if (!inflator) {
+        return -1;
+    }
+
+    inflator_setsrc(inflator, compressed, comp_size);
+    inflator_settgt(inflator, output, out_size);
+    
+    eINFLTResult result = inflator_inflate(inflator, 1);  // final=1
+
+    if (result == INFLT_OK) {
+        *bytes_written = inflator_tgtend(inflator);
+        inflator_destroy(inflator);
+        return 0;
+    } else if (result == INFLT_ERROR) {
+        fprintf(stderr, "Error: %u\n", inflator->error);
+    } else {
+        fprintf(stderr, "Buffer too small or incomplete data\n");
+    }
+
+    inflator_destroy(inflator);
+    return -1;
+}
+```
+
+## Error Handling Example
+
+```c
+#include <jdeflate/inflator.h>
+
+const char* inflt_error_string(eINFLTError error) {
+    switch (error) {
+        case INFLT_EBADSTATE:  return "Invalid state";
+        case INFLT_EBADCODE:   return "Invalid Huffman code";
+        case INFLT_EBADTREE:   return "Invalid Huffman tree";
+        case INFLT_EFAROFFSET: return "Distance offset too far";
+        case INFLT_EBADBLOCK:  return "Invalid block structure";
+        case INFLT_EINPUTEND:  return "Unexpected end of input";
+        case INFLT_EOOM:       return "Out of memory";
+        case INFLT_EINCORRECTUSE: return "Incorrect API usage";
+        default: return "Unknown error";
+    }
+}
+
+void handle_inflate_result(TInflator* inflator, eINFLTResult result) {
+    switch (result) {
+        case INFLT_OK:
+            printf("Decompression complete\n");
+            break;
+        case INFLT_SRCEXHSTD:
+            // Provide more input
+            break;
+        case INFLT_TGTEXHSTD:
+            // Provide more output space
+            break;
+        case INFLT_ERROR:
+            fprintf(stderr, "Inflation error: %s\n",
+                    inflt_error_string(inflator->error));
+            break;
+    }
+}
+```
+
+## Notes
+
+<Note>
+- Always check the return value to determine the next action (provide more input, more output space, or handle completion/error).
+- Use `inflator_tgtend()` to get the number of bytes written to the output buffer after each call.
+- Use `inflator_srcend()` to get the number of bytes consumed from the input buffer.
+- The function can be called repeatedly with the same buffers if needed.
+</Note>
+
+<Warning>
+- Do not set `final=1` until you've provided all input data.
+- Once `final=1` is set and you call `inflator_inflate()`, do not call `inflator_setsrc()` again.
+- If the result is `INFLT_TGTEXHSTD`, you must provide a new target buffer before continuing.
+</Warning>
+
+## See Also
+
+- [inflator_setsrc()](/api/inflator/inflator-setsrc) - Set the source buffer
+- [inflator_settgt()](/api/inflator/inflator-settgt) - Set the target buffer
+- [Inflator Overview](/api/inflator/overview) - Complete workflow and result codes

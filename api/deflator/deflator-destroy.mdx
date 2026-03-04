@@ -1,0 +1,117 @@
+---
+title: 'deflator_destroy'
+description: 'Destroy a deflator instance and free associated resources'
+---
+
+## Function Signature
+
+```c
+void deflator_destroy(TDeflator*);
+```
+
+Destroys a deflator instance and frees all associated resources.
+
+## Parameters
+
+<ParamField path="state" type="TDeflator*" required>
+  Pointer to the deflator instance to destroy. This should be a deflator created with [`deflator_create()`](/api/deflator/deflator-create).
+</ParamField>
+
+## Return Value
+
+This function does not return a value.
+
+## Usage Example
+
+```c
+#include <jdeflate/deflator.h>
+
+// Create a deflator
+TDeflator* deflator = deflator_create(0, 6, NULL);
+if (!deflator) {
+    fprintf(stderr, "Failed to create deflator\n");
+    return -1;
+}
+
+// Use the deflator for compression
+// ...
+
+// Destroy the deflator when done
+deflator_destroy(deflator);
+```
+
+## Complete Lifecycle Example
+
+```c
+#include <jdeflate/deflator.h>
+#include <stdio.h>
+#include <stdlib.h>
+
+int compress_file(const char* input_path, const char* output_path) {
+    TDeflator* deflator = NULL;
+    FILE* in = NULL;
+    FILE* out = NULL;
+    int result = -1;
+    
+    // Create deflator
+    deflator = deflator_create(0, 6, NULL);
+    if (!deflator) {
+        fprintf(stderr, "Failed to create deflator\n");
+        goto cleanup;
+    }
+    
+    // Open files
+    in = fopen(input_path, "rb");
+    out = fopen(output_path, "wb");
+    if (!in || !out) {
+        fprintf(stderr, "Failed to open files\n");
+        goto cleanup;
+    }
+    
+    // Perform compression
+    // ...
+    
+    result = 0; // Success
+    
+cleanup:
+    // Always destroy the deflator to free resources
+    if (deflator) {
+        deflator_destroy(deflator);
+    }
+    if (in) fclose(in);
+    if (out) fclose(out);
+    
+    return result;
+}
+```
+
+## Important Notes
+
+<Warning>
+Always call `deflator_destroy()` when you're done with a deflator instance to prevent memory leaks.
+</Warning>
+
+<Note>
+After calling `deflator_destroy()`, the deflator pointer is no longer valid. Do not attempt to use it.
+</Note>
+
+### Safe Destruction Pattern
+
+```c
+if (deflator) {
+    deflator_destroy(deflator);
+    deflator = NULL; // Good practice to avoid use-after-free
+}
+```
+
+## Memory Management
+
+The `deflator_destroy()` function:
+- Frees all internal buffers and structures
+- Uses the same allocator that was specified in [`deflator_create()`](/api/deflator/deflator-create)
+- Is safe to call even if compression is incomplete
+
+## Related Functions
+
+- [`deflator_create()`](/api/deflator/deflator-create) - Create a deflator instance
+- [`deflator_reset()`](/api/deflator/deflator-reset) - Reset a deflator for reuse

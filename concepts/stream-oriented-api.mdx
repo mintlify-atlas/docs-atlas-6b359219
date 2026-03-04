@@ -1,0 +1,213 @@
+---
+title: Stream-Oriented API
+description: Understanding Jdeflate's stream-based compression and decompression architecture
+---
+
+Jdeflate is designed around a stream-oriented API that processes data in chunks, making it ideal for handling large datasets without loading everything into memory at once.
+
+## Architecture Overview
+
+The stream API operates on a simple principle: you provide source data in chunks and receive processed output in chunks. This pattern applies to both compression (deflation) and decompression (inflation).
+
+### Core Components
+
+Both `TDeflator` and `TInflator` structures maintain stream buffers:
+
+```c
+struct TDeflator {
+    /* stream buffers */
+    const uint8* source;  // Current position in source buffer
+    const uint8* sbgn;    // Beginning of source buffer
+    const uint8* send;    // End of source buffer
+    
+    uint8* target;        // Current position in target buffer
+    uint8* tbgn;          // Beginning of target buffer
+    uint8* tend;          // End of target buffer
+};
+```
+
+## The Streaming Loop Pattern
+
+### Compression Example
+
+The typical deflation loop follows this pattern from `jdeflate/deflator.h:24-36`:
+
+```c
+eDEFLTResult result;
+int final = 0;
+
+do {
+    // Read a chunk of data into source buffer
+    deflator_setsrc(state, source, sourcesize);
+    
+    if (/* no more input */)
+        final = 1;
+    
+    do {
+        deflator_settgt(state, target, targetsize);
+        result = deflator_deflate(state, final);
+        
+        // Process compressed data from target up to deflator_tgtend(state)
+        uintxx compressed_bytes = deflator_tgtend(state);
+    } while (result == DEFLT_TGTEXHSTD);
+} while (result == DEFLT_SRCEXHSTD);
+```
+
+### Decompression Example
+
+The inflation loop is symmetrical from `jdeflate/inflator.h:24-37`:
+
+```c
+eINFLTResult result;
+uint32 final = 0;
+
+do {
+    if (/* no more input */)
+        final = 1;
+    
+    // Read compressed data into source buffer
+    inflator_setsrc(state, source, sourcesize);
+    
+    do {
+        inflator_settgt(state, target, targetsize);
+        result = inflator_inflate(state, final);
+        
+        // Process decompressed data from target up to inflator_tgtend(state)
+        uintxx decompressed_bytes = inflator_tgtend(state);
+    } while (result == INFLT_TGTEXHSTD);
+} while (result == INFLT_SRCEXHSTD);
+```
+
+## Status Codes
+
+### Deflator Status Codes
+
+The `eDEFLTResult` enum defines the return values:
+
+```c
+typedef enum {
+    DEFLT_OK        = 0,  // Operation completed successfully
+    DEFLT_SRCEXHSTD = 1,  // Source buffer exhausted, need more input
+    DEFLT_TGTEXHSTD = 2,  // Target buffer exhausted, need more output space
+    DEFLT_ERROR     = 3   // An error occurred
+} eDEFLTResult;
+```
+
+### Inflator Status Codes
+
+The `eINFLTResult` enum mirrors the deflator:
+
+```c
+typedef enum {
+    INFLT_OK        = 0,  // Operation completed successfully
+    INFLT_SRCEXHSTD = 1,  // Source buffer exhausted, need more input
+    INFLT_TGTEXHSTD = 2,  // Target buffer exhausted, need more output space
+    INFLT_ERROR     = 3   // An error occurred
+} eINFLTResult;
+```
+
+<Info>
+The `SRCEXHSTD` and `TGTEXHSTD` status codes are not errors - they indicate normal flow control in the streaming process.
+</Info>
+
+## Buffer Management Functions
+
+### Setting Buffers
+
+Source and target buffers are set using inline functions:
+
+```c
+// Set source buffer (jdeflate/deflator.h:159-179)
+void deflator_setsrc(TDeflator* state, const uint8* source, uintxx size)
+{
+    state->source = state->sbgn = state->send = source;
+    state->send += size;
+}
+
+// Set target buffer (jdeflate/deflator.h:181-188)
+void deflator_settgt(TDeflator* state, uint8* target, uintxx size)
+{
+    state->target = state->tbgn = state->tend = target;
+    state->tend += size;
+}
+```
+
+### Querying Progress
+
+After processing, query how many bytes were consumed or produced:
+
+```c
+// Get bytes consumed from source (jdeflate/deflator.h:190-195)
+uintxx deflator_srcend(TDeflator* state)
+{
+    return (uintxx)(state->source - state->sbgn);
+}
+
+// Get bytes written to target (jdeflate/deflator.h:197-202)
+uintxx deflator_tgtend(TDeflator* state)
+{
+    return (uintxx)(state->target - state->tbgn);
+}
+```
+
+## Flush Modes
+
+The deflator supports different flush modes:
+
+```c
+typedef enum {
+    DEFLT_NOFLUSH = 0,  // Normal operation
+    DEFLT_END     = 1,  // Finalize the stream
+    DEFLT_FLUSH   = 2   // Flush pending data
+} eDEFLTFlush;
+```
+
+<Warning>
+When using `DEFLT_FLUSH` or `DEFLT_END`, no new source data should be set until the deflator returns `DEFLT_OK`. The deflator appends a STORED block at the end when flushing, similar to zlib's `Z_SYNC_FLUSH`.
+</Warning>
+
+## Simplified Buffer Mode
+
+For small, single-shot operations where all data fits in memory:
+
+```c
+// Compression
+deflator_setsrc(deflator, source, sourcesize);
+deflator_settgt(deflator, target, targetsize);
+if (deflator_deflate(deflator, DEFLT_END) != DEFLT_OK) {
+    // handle error
+}
+
+// Decompression
+inflator_setsrc(inflator, source, sourcesize);
+inflator_settgt(inflator, target, targetsize);
+if (inflator_inflate(inflator, 1) != INFLT_OK) {
+    // handle error
+}
+```
+
+<Note>
+Simplified mode skips the nested loop structure when you know all data fits in the provided buffers.
+</Note>
+
+## Dictionary Support
+
+Both deflator and inflator support preset dictionaries:
+
+```c
+void deflator_setdctnr(TDeflator*, const uint8* dict, uintxx size);
+void inflator_setdctnr(TInflator*, const uint8* dict, uintxx size);
+```
+
+Dictionaries allow better compression when repeatedly compressing similar data structures.
+
+## Resetting State
+
+Reuse instances without reallocation:
+
+```c
+void deflator_reset(TDeflator*);
+void inflator_reset(TInflator*);
+```
+
+This resets the internal state while preserving allocated memory, enabling efficient reuse for processing multiple independent streams.

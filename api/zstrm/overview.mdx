@@ -1,0 +1,157 @@
+---
+title: 'ZStrm Overview'
+description: 'Stream-oriented deflate and gzip encoder/decoder'
+---
+
+## Introduction
+
+The `zstrm` module provides a high-level, stream-oriented interface for compressing and decompressing data using the DEFLATE algorithm with support for zlib and gzip formats.
+
+It simplifies tasks like reading and writing compressed data directly to files or network streams in a non-obstructive way using callbacks.
+
+## TZStrm Structure
+
+The main stream object exposes the following public state:
+
+```c
+struct TZStrm {
+    /* state */
+    uint32 state;       /* eZSTRMState */
+    uint32 error;       /* eZSTRMError */
+    uint32 flags;       /* eZSTRMFlags */
+    uint32 smode;       /* eZSTRMMode */
+    uint32 stype;       /* eZSTRMType */
+    int32  level;       /* compression level */
+
+    /* total number of bytes read or written */
+    uintxx total;
+
+    /* dictionary id (adler32 checksum) */
+    uint32 dictid;
+    uint32 dict;
+
+    /* checksums */
+    uint32 crc;
+    uint32 adler;
+
+    /* number of bytes consumed from the source buffer or IO callback */
+    uintxx usedinput;
+};
+```
+
+## Enumerations
+
+### eZSTRMMode
+
+Stream operation mode:
+
+- `ZSTRM_INFLATE` (`0x00010000`) - Decompression mode
+- `ZSTRM_DEFLATE` (`0x00020000`) - Compression mode
+
+### eZSTRMType
+
+Stream format type:
+
+- `ZSTRM_DFLT` (`0x00100000`) - Raw DEFLATE encoding
+- `ZSTRM_ZLIB` (`0x00200000`) - Zlib format (DEFLATE with header/trailer)
+- `ZSTRM_GZIP` (`0x00400000`) - Gzip format
+
+### eZSTRMFlags
+
+Additional stream flags:
+
+- `ZSTRM_DOCRC` (`0x01000000`) - Force CRC checksums, even for stream types that don't require them
+- `ZSTRM_DOADLER` (`0x02000000`) - Force Adler32 checksums, even for stream types that don't require them
+- `ZSTRM_NOCRC` (`0x04000000`) - Ignore CRC checksums (inflate mode only)
+- `ZSTRM_NOADLER` (`0x08000000`) - Ignore Adler32 checksums (inflate mode only)
+
+### eZSTRMError
+
+Error codes:
+
+- `ZSTRM_OK` (`0`) - No error
+- `ZSTRM_EIOERROR` (`1`) - I/O error
+- `ZSTRM_EOOM` (`2`) - Out of memory
+- `ZSTRM_EBADDATA` (`3`) - Invalid compressed data
+- `ZSTRM_ECHECKSUM` (`4`) - Checksum mismatch
+- `ZSTRM_EFORMAT` (`5`) - Invalid format
+- `ZSTRM_EMISSINGDICT` (`6`) - Missing dictionary
+- `ZSTRM_ESRCEXHSTD` (`7`) - Source exhausted
+- `ZSTRM_ETGTEXHSTD` (`8`) - Target exhausted
+- `ZSTRM_EDEFLATE` (`9`) - Deflate error
+- `ZSTRM_EBADDICT` (`10`) - Invalid dictionary
+- `ZSTRM_ELIMIT` (`11`) - Limit exceeded
+- `ZSTRM_EINCORRECTUSE` (`12`) - Incorrect usage
+
+### eZSTRMState
+
+Stream state:
+
+- `ZSTRM_NOTSET` (`0`) - Not initialized
+- `ZSTRM_READY` (`1`) - Ready for operation
+- `ZSTRM_NEEDDICT` (`2`) - Dictionary required
+- `ZSTRM_NORMAL` (`3`) - Normal processing
+- `ZSTRM_END` (`4`) - Stream ended
+
+## Callback Types
+
+### TZStrmIFn
+
+Input callback function for reading compressed data:
+
+```c
+typedef intxx (*TZStrmIFn)(uint8* buffer, uintxx size, void* user);
+```
+
+**Parameters:**
+- `buffer` - Buffer to fill with input data
+- `size` - Maximum number of bytes to read
+- `user` - User-provided context pointer
+
+**Returns:**
+- Number of bytes read (0 if no more input available, -1 on error)
+
+### TZStrmOFn
+
+Output callback function for writing compressed/decompressed data:
+
+```c
+typedef intxx (*TZStrmOFn)(const uint8* buffer, uintxx size, void* user);
+```
+
+**Parameters:**
+- `buffer` - Buffer containing output data
+- `size` - Number of bytes to write
+- `user` - User-provided context pointer
+
+**Returns:**
+- Number of bytes written (0 if target full, -1 on error)
+
+## Typical Workflow
+
+### Compression
+
+1. Create a stream with `ZSTRM_DEFLATE` mode and desired format
+2. Set target callback with `zstrm_settargetfn()`
+3. Call `zstrm_deflate()` for each chunk of source data
+4. Finalize with `zstrm_flush(zstrm, 1)`
+5. Destroy the stream with `zstrm_destroy()`
+
+### Decompression
+
+1. Create a stream with `ZSTRM_INFLATE` mode
+2. Set source callback with `zstrm_setsourcefn()` or buffer with `zstrm_setsource()`
+3. Call `zstrm_inflate()` to decompress into target buffer
+4. Check `zstrm->error` after each operation
+5. Destroy the stream with `zstrm_destroy()`
+
+<Note>
+Always check the `error` field of the `TZStrm` structure after each operation to handle errors appropriately.
+</Note>
+
+## See Also
+
+- [zstrm_create](/api/zstrm/zstrm-create) - Create a new stream
+- [zstrm_deflate](/api/zstrm/zstrm-deflate) - Compress data
+- [zstrm_inflate](/api/zstrm/zstrm-inflate) - Decompress data
+- [zstrm_destroy](/api/zstrm/zstrm-destroy) - Destroy a stream

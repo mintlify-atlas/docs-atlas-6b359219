@@ -1,0 +1,371 @@
+---
+title: 'zstrm_settargetfn'
+description: 'Set the target callback function for stream output'
+---
+
+## Function Signature
+
+```c
+void zstrm_settargetfn(const TZStrm* zstrm, TZStrmOFn fn, void* user);
+```
+
+Sets the target callback function for stream output. The callback will be called when the stream has compressed data ready to write during compression operations.
+
+## Parameters
+
+<ParamField path="zstrm" type="const TZStrm*" required>
+  Pointer to a stream created with `ZSTRM_DEFLATE` mode.
+</ParamField>
+
+<ParamField path="fn" type="TZStrmOFn" required>
+  Output callback function with signature:
+  ```c
+  intxx callback(const uint8* buffer, uintxx size, void* user);
+  ```
+  
+  The callback should:
+  - Write `size` bytes from `buffer` to the output destination
+  - Return the number of bytes actually written
+  - Return `0` if the output is full or cannot accept more data
+  - Return `-1` on error
+</ParamField>
+
+<ParamField path="user" type="void*">
+  User-provided context pointer that will be passed to the callback function. Can be `NULL` if not needed.
+</ParamField>
+
+## Return Value
+
+This function does not return a value.
+
+## Callback Function
+
+### TZStrmOFn Signature
+
+```c
+typedef intxx (*TZStrmOFn)(const uint8* buffer, uintxx size, void* user);
+```
+
+**Parameters:**
+- `buffer` - Buffer containing compressed output data
+- `size` - Number of bytes to write
+- `user` - User context pointer provided to `zstrm_settargetfn()`
+
+**Return Value:**
+- Number of bytes written (should typically equal `size`)
+- `0` - Output destination is full
+- `-1` - Error occurred
+
+## Examples
+
+### File Output Callback
+
+```c
+/* Callback that writes compressed data to a file */
+intxx file_output_callback(const uint8* buffer, uintxx size, void* user) {
+    FILE* fp = (FILE*)user;
+    size_t written = fwrite(buffer, 1, size, fp);
+    
+    if (written != size) {
+        return -1;  /* Write error */
+    }
+    
+    return (intxx)written;
+}
+
+/* Usage */
+FILE* output_file = fopen("output.gz", "wb");
+const TZStrm* zstrm;
+const char* data = "Hello, World!";
+
+if (!output_file) {
+    return -1;
+}
+
+zstrm = zstrm_create(ZSTRM_DEFLATE | ZSTRM_GZIP, 9, NULL);
+zstrm_settargetfn(zstrm, file_output_callback, output_file);
+
+/* Compress */
+zstrm_deflate(zstrm, data, strlen(data));
+zstrm_flush(zstrm, 1);
+
+if (zstrm->error) {
+    fprintf(stderr, "Compression error: %u\n", zstrm->error);
+}
+
+zstrm_destroy(zstrm);
+fclose(output_file);
+```
+
+### Network Output Callback
+
+```c
+typedef struct {
+    int socket_fd;
+    int flags;
+} NetworkContext;
+
+intxx network_output_callback(const uint8* buffer, uintxx size, void* user) {
+    NetworkContext* ctx = (NetworkContext*)user;
+    ssize_t sent = send(ctx->socket_fd, buffer, size, ctx->flags);
+    
+    if (sent < 0) {
+        return -1;  /* Network error */
+    }
+    
+    return (intxx)sent;
+}
+
+/* Usage */
+NetworkContext net_ctx = { .socket_fd = sock, .flags = 0 };
+const TZStrm* zstrm;
+
+zstrm = zstrm_create(ZSTRM_DEFLATE | ZSTRM_GZIP, 6, NULL);
+zstrm_settargetfn(zstrm, network_output_callback, &net_ctx);
+
+/* Compress and stream data */
+while (have_more_data()) {
+    uint8* chunk;
+    uintxx chunk_size;
+    get_next_chunk(&chunk, &chunk_size);
+    
+    zstrm_deflate(zstrm, chunk, chunk_size);
+    if (zstrm->error) {
+        break;
+    }
+}
+
+zstrm_flush(zstrm, 1);
+zstrm_destroy(zstrm);
+```
+
+### Dynamic Buffer Output
+
+```c
+typedef struct {
+    uint8* data;
+    uintxx size;
+    uintxx capacity;
+} DynamicBuffer;
+
+intxx dynamic_buffer_callback(const uint8* buffer, uintxx size, void* user) {
+    DynamicBuffer* buf = (DynamicBuffer*)user;
+    
+    /* Grow buffer if needed */
+    if (buf->size + size > buf->capacity) {
+        uintxx new_capacity = (buf->size + size) * 2;
+        uint8* new_data = realloc(buf->data, new_capacity);
+        
+        if (!new_data) {
+            return -1;  /* Out of memory */
+        }
+        
+        buf->data = new_data;
+        buf->capacity = new_capacity;
+    }
+    
+    /* Append data */
+    memcpy(buf->data + buf->size, buffer, size);
+    buf->size += size;
+    
+    return (intxx)size;
+}
+
+/* Usage */
+DynamicBuffer output = { .data = NULL, .size = 0, .capacity = 0 };
+const TZStrm* zstrm;
+const char* input = "Data to compress";
+
+zstrm = zstrm_create(ZSTRM_DEFLATE | ZSTRM_GZIP, 9, NULL);
+zstrm_settargetfn(zstrm, dynamic_buffer_callback, &output);
+
+zstrm_deflate(zstrm, input, strlen(input));
+zstrm_flush(zstrm, 1);
+
+if (!zstrm->error) {
+    printf("Compressed %llu bytes\n", (unsigned long long)output.size);
+    /* Use output.data and output.size */
+}
+
+free(output.data);
+zstrm_destroy(zstrm);
+```
+
+### Compress File with Progress Tracking
+
+```c
+typedef struct {
+    FILE* file;
+    uintxx total_written;
+    uintxx* progress_counter;  /* Shared with main thread */
+} OutputContext;
+
+intxx tracking_output_callback(const uint8* buffer, uintxx size, void* user) {
+    OutputContext* ctx = (OutputContext*)user;
+    size_t written = fwrite(buffer, 1, size, ctx->file);
+    
+    if (written != size) {
+        return -1;
+    }
+    
+    ctx->total_written += written;
+    
+    /* Update progress for UI */
+    if (ctx->progress_counter) {
+        *ctx->progress_counter = ctx->total_written;
+    }
+    
+    return (intxx)written;
+}
+
+/* Usage */
+uintxx progress = 0;
+OutputContext out_ctx = {
+    .file = fopen("output.gz", "wb"),
+    .total_written = 0,
+    .progress_counter = &progress
+};
+
+const TZStrm* zstrm = zstrm_create(ZSTRM_DEFLATE | ZSTRM_GZIP, 9, NULL);
+zstrm_settargetfn(zstrm, tracking_output_callback, &out_ctx);
+
+/* Compress data... */
+zstrm_deflate(zstrm, input_data, input_size);
+zstrm_flush(zstrm, 1);
+
+printf("Total compressed bytes: %llu\n", (unsigned long long)out_ctx.total_written);
+
+zstrm_destroy(zstrm);
+fclose(out_ctx.file);
+```
+
+### Multiple Output Destinations
+
+```c
+typedef struct {
+    FILE* file1;
+    FILE* file2;
+} TeeContext;
+
+/* Write to two files simultaneously */
+intxx tee_output_callback(const uint8* buffer, uintxx size, void* user) {
+    TeeContext* ctx = (TeeContext*)user;
+    size_t written1 = fwrite(buffer, 1, size, ctx->file1);
+    size_t written2 = fwrite(buffer, 1, size, ctx->file2);
+    
+    if (written1 != size || written2 != size) {
+        return -1;
+    }
+    
+    return (intxx)size;
+}
+
+/* Usage */
+TeeContext tee = {
+    .file1 = fopen("output1.gz", "wb"),
+    .file2 = fopen("output2.gz", "wb")
+};
+
+const TZStrm* zstrm = zstrm_create(ZSTRM_DEFLATE | ZSTRM_GZIP, 9, NULL);
+zstrm_settargetfn(zstrm, tee_output_callback, &tee);
+
+zstrm_deflate(zstrm, data, data_size);
+zstrm_flush(zstrm, 1);
+
+zstrm_destroy(zstrm);
+fclose(tee.file1);
+fclose(tee.file2);
+```
+
+## Notes
+
+<Warning>
+  You must call `zstrm_settargetfn()` before performing any compression operations with `zstrm_deflate()`. Without an output callback, there is nowhere to write the compressed data.
+</Warning>
+
+<Note>
+  The callback will be called multiple times during compression as compressed data becomes available. Each call should write all the provided data to maximize efficiency.
+</Note>
+
+<Note>
+  If your callback returns a value less than `size` (including `0` or `-1`), the stream's error field will be set to `ZSTRM_EIOERROR` and compression will stop.
+</Note>
+
+<Note>
+  The callback should typically return `size` to indicate that all bytes were successfully written. Returning any other value signals an error or full output condition.
+</Note>
+
+## Best Practices
+
+### Robust Error Handling
+
+```c
+intxx robust_file_callback(const uint8* buffer, uintxx size, void* user) {
+    FILE* fp = (FILE*)user;
+    
+    clearerr(fp);
+    size_t written = fwrite(buffer, 1, size, fp);
+    
+    /* Check for write errors */
+    if (written < size) {
+        if (ferror(fp)) {
+            perror("Write error");
+        }
+        return -1;
+    }
+    
+    /* Optionally flush for real-time output */
+    /* fflush(fp); */
+    
+    return (intxx)written;
+}
+```
+
+### Buffered Output for Performance
+
+```c
+typedef struct {
+    FILE* file;
+    uint8 buffer[8192];
+    uintxx buffered;
+} BufferedOutput;
+
+intxx buffered_callback(const uint8* data, uintxx size, void* user) {
+    BufferedOutput* out = (BufferedOutput*)user;
+    uintxx written = 0;
+    
+    while (written < size) {
+        uintxx space = sizeof(out->buffer) - out->buffered;
+        uintxx to_copy = (size - written < space) ? (size - written) : space;
+        
+        memcpy(out->buffer + out->buffered, data + written, to_copy);
+        out->buffered += to_copy;
+        written += to_copy;
+        
+        /* Flush when buffer is full */
+        if (out->buffered == sizeof(out->buffer)) {
+            if (fwrite(out->buffer, 1, out->buffered, out->file) != out->buffered) {
+                return -1;
+            }
+            out->buffered = 0;
+        }
+    }
+    
+    return (intxx)written;
+}
+
+/* Don't forget to flush remaining data after compression! */
+void flush_buffered_output(BufferedOutput* out) {
+    if (out->buffered > 0) {
+        fwrite(out->buffer, 1, out->buffered, out->file);
+        out->buffered = 0;
+    }
+}
+```
+
+## See Also
+
+- [zstrm_deflate](/api/zstrm/zstrm-deflate) - Compress data
+- [zstrm_flush](/api/zstrm/zstrm-flush) - Flush and finalize compression
+- [zstrm_setsourcefn](/api/zstrm/zstrm-setsourcefn) - Set input callback for decompression
+- [zstrm_create](/api/zstrm/zstrm-create) - Create a stream

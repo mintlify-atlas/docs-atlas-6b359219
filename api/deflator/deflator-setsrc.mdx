@@ -1,0 +1,166 @@
+---
+title: 'deflator_setsrc'
+description: 'Set the source buffer and size for the deflator instance'
+---
+
+## Function Signature
+
+```c
+CTB_INLINE
+void deflator_setsrc(TDeflator*, const uint8* source, uintxx size);
+```
+
+Sets the source buffer containing uncompressed data to be processed by the deflator. This function must be called before [`deflator_deflate()`](/api/deflator/deflator-deflate).
+
+## Parameters
+
+<ParamField path="state" type="TDeflator*" required>
+  Pointer to the deflator instance.
+</ParamField>
+
+<ParamField path="source" type="const uint8*" required>
+  Pointer to the source buffer containing uncompressed data. Must not be `NULL`.
+</ParamField>
+
+<ParamField path="size" type="uintxx" required>
+  Size of the source buffer in bytes. Must be greater than 0.
+</ParamField>
+
+## Return Value
+
+This function does not return a value.
+
+## Important Behavior
+
+<Warning>
+**Do not set new source data while a flush is pending.** If you call `deflator_setsrc()` when the deflator's flush mode is active (`DEFLT_FLUSH` or `DEFLT_END`), the deflator will enter an error state with `DEFLT_EINCORRECTUSE`.
+
+Wait until [`deflator_deflate()`](/api/deflator/deflator-deflate) returns `DEFLT_OK` before setting new source data.
+</Warning>
+
+## Implementation Details
+
+The inline implementation:
+
+```c
+CTB_INLINE void
+deflator_setsrc(TDeflator* state, const uint8* source, uintxx size)
+{
+    CTB_ASSERT(state && source && size);
+
+    if (CTB_EXPECT0(state->flush)) {
+        if (state->error == 0) {
+            struct TNonConstInflator {
+                uint32 state;
+                uint32 error;
+            }* p;
+
+            p = (struct TNonConstInflator*) state;
+            p->error = DEFLT_EINCORRECTUSE;
+            p->state = 0xDEADBEEF;
+        }
+        return;
+    }
+
+    state->source = state->sbgn = state->send = source;
+    state->send  += size;
+}
+```
+
+## Usage Example
+
+### Basic Usage
+
+```c
+#include <jdeflate/deflator.h>
+
+uint8 input_data[1024];
+uintxx input_size = sizeof(input_data);
+
+// Read data into input_data
+// ...
+
+// Set the source buffer
+deflator_setsrc(deflator, input_data, input_size);
+
+// Now call deflator_deflate()
+```
+
+### Streaming Compression
+
+```c
+#define CHUNK_SIZE 4096
+
+uint8 source[CHUNK_SIZE];
+FILE* input_file = fopen("input.dat", "rb");
+
+size_t bytes_read;
+while ((bytes_read = fread(source, 1, CHUNK_SIZE, input_file)) > 0) {
+    // Set source for this chunk
+    deflator_setsrc(deflator, source, bytes_read);
+    
+    // Process the chunk
+    eDEFLTResult result;
+    do {
+        deflator_settgt(deflator, target, target_size);
+        result = deflator_deflate(deflator, DEFLT_NOFLUSH);
+        
+        // Handle compressed output
+        // ...
+    } while (result == DEFLT_TGTEXHSTD);
+}
+```
+
+### Handling Flush Correctly
+
+```c
+// Initiate flush
+eDEFLTResult result;
+do {
+    deflator_settgt(deflator, target, target_size);
+    result = deflator_deflate(deflator, DEFLT_FLUSH);
+    
+    // Write output
+    // ...
+} while (result == DEFLT_TGTEXHSTD);
+
+// Wait for flush to complete
+if (result == DEFLT_OK) {
+    // NOW it's safe to set new source data
+    deflator_setsrc(deflator, new_source, new_size);
+} else if (result == DEFLT_ERROR) {
+    // Handle error
+}
+```
+
+### Incorrect Usage (Will Cause Error)
+
+```c
+// WRONG: Setting source while flush is pending
+deflator_deflate(deflator, DEFLT_FLUSH);
+
+// This will set DEFLT_EINCORRECTUSE error!
+deflator_setsrc(deflator, new_source, new_size);
+
+// The deflator is now in an error state
+```
+
+## Tracking Source Progress
+
+Use [`deflator_srcend()`](deflator.h:124) to check how many bytes from the source have been processed:
+
+```c
+deflator_setsrc(deflator, source, source_size);
+deflator_settgt(deflator, target, target_size);
+deflator_deflate(deflator, DEFLT_NOFLUSH);
+
+// Check how much was consumed
+uintxx bytes_processed = deflator_srcend(deflator);
+printf("Processed %zu of %zu bytes\n", bytes_processed, source_size);
+```
+
+## Related Functions
+
+- [`deflator_deflate()`](/api/deflator/deflator-deflate) - Compress data from source to target
+- [`deflator_settgt()`](/api/deflator/deflator-settgt) - Set the target buffer
+- [`deflator_srcend()`](deflator.h:124) - Get number of bytes processed from source

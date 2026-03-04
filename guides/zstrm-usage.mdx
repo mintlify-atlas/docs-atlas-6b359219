@@ -1,0 +1,399 @@
+---
+title: "ZStrm High-Level API"
+description: "Learn how to use Jdeflate's high-level ZStrm API for zlib, gzip, and raw deflate streams"
+---
+
+`zstrm` is the high-level API of Jdeflate that provides a simplified interface for handling zlib, gzip, and raw deflate streams. It uses callback functions to handle I/O operations in a non-obstructive way.
+
+## Overview
+
+The ZStrm API simplifies tasks like:
+- Reading and writing compressed data to files or network streams
+- Handling multiple compression formats (zlib, gzip, raw deflate)
+- Automatic format detection during decompression
+- Callback-based I/O for flexible data handling
+
+## Including the Header
+
+Include the zstrm header in your project:
+
+```c
+#include <jdeflate/zstrm.h>
+```
+
+For C++ projects:
+
+```cpp
+extern "C" {
+    #include <jdeflate/zstrm.h>
+}
+```
+
+## Stream Types
+
+ZStrm supports three compression formats:
+
+| Format | Flag | Description |
+|--------|------|-------------|
+| Raw deflate | `ZSTRM_DFLT` | Raw DEFLATE encoding |
+| zlib | `ZSTRM_ZLIB` | zlib format with header and checksum |
+| gzip | `ZSTRM_GZIP` | gzip format with header and checksum |
+
+## Initialization
+
+### Creating a Compressor
+
+For compression, specify the stream type using flags:
+
+```c
+const TZStrm* zstrm;
+
+/* creates a GZIP compressor using the compression level 9 */
+zstrm = zstrm_create(ZSTRM_DEFLATE | ZSTRM_GZIP, 9, NULL);
+if (zstrm == NULL) {
+    /* ...handle error */
+}
+```
+
+<Steps>
+  <Step title="Choose your format">
+    Combine `ZSTRM_DEFLATE` with the desired format:
+    
+    ```c
+    /* For raw deflate */
+    zstrm = zstrm_create(ZSTRM_DEFLATE | ZSTRM_DFLT, 6, NULL);
+    
+    /* For zlib format */
+    zstrm = zstrm_create(ZSTRM_DEFLATE | ZSTRM_ZLIB, 6, NULL);
+    
+    /* For gzip format */
+    zstrm = zstrm_create(ZSTRM_DEFLATE | ZSTRM_GZIP, 9, NULL);
+    ```
+  </Step>
+
+  <Step title="Set compression level">
+    - Valid levels: 0-9
+    - 0 = no compression
+    - 9 = maximum compression
+    - 6 = good balance (recommended)
+  </Step>
+</Steps>
+
+### Creating a Decompressor
+
+For decompression, the stream type is automatically detected:
+
+```c
+const TZStrm* zstrm;
+
+/* creates a decompressor for any format */
+zstrm = zstrm_create(ZSTRM_INFLATE, 0, NULL);
+if (zstrm == NULL) {
+    /* ...handle error */
+}
+```
+
+<Note>
+  You can optionally restrict accepted formats by combining `ZSTRM_INFLATE` with format flags like `ZSTRM_GZIP` to only accept gzip streams.
+</Note>
+
+## Callback Functions
+
+ZStrm uses callbacks to handle input and output data:
+
+```c
+/* target function */
+intxx targetcallback(const uint8* buffer, uintxx size, void* userpayload);
+
+/* source function */
+intxx sourcecallback(uint8* buffer, uintxx size, void* userpayload);
+```
+
+### Callback Requirements
+
+<Accordion title="Source Callback (for decompression)">
+  - **Purpose**: Reads compressed data
+  - **Parameters**: 
+    - `buffer`: Buffer to fill with data
+    - `size`: Maximum bytes to read
+    - `userpayload`: User-defined data pointer
+  - **Return**: Number of bytes read, or negative on error
+  
+  ```c
+  intxx read_callback(uint8* buffer, uintxx size, void* user) {
+      FILE* fp = (FILE*)user;
+      size_t read = fread(buffer, 1, size, fp);
+      return (intxx)read;
+  }
+  ```
+</Accordion>
+
+<Accordion title="Target Callback (for compression)">
+  - **Purpose**: Writes compressed data
+  - **Parameters**:
+    - `buffer`: Buffer containing data to write
+    - `size`: Number of bytes to write
+    - `userpayload`: User-defined data pointer
+  - **Return**: Number of bytes written, or negative on error
+  
+  ```c
+  intxx write_callback(const uint8* buffer, uintxx size, void* user) {
+      FILE* fp = (FILE*)user;
+      size_t written = fwrite(buffer, 1, size, fp);
+      return (intxx)written;
+  }
+  ```
+</Accordion>
+
+### Setting Callbacks
+
+For compression (needs target callback):
+
+```c
+zstrm_settargetfn(zstrm, targetcallback, userpayload);
+```
+
+For decompression (needs source callback):
+
+```c
+zstrm_setsourcefn(zstrm, sourcecallback, userpayload);
+```
+
+Alternatively, for decompression you can use a buffer:
+
+```c
+zstrm_setsource(zstrm, buffer, buffersize);
+```
+
+## Compression
+
+Compress data using the target callback:
+
+```c
+zstrm_deflate(zstrm, source, sourcesize);
+if (zstrm->error) {
+    /* ... handle errors */
+}
+```
+
+### Complete Compression Example
+
+```c
+#include <jdeflate/zstrm.h>
+#include <stdio.h>
+
+intxx write_to_file(const uint8* buffer, uintxx size, void* user) {
+    FILE* fp = (FILE*)user;
+    return (intxx)fwrite(buffer, 1, size, fp);
+}
+
+int compress_to_gzip(const char* input_file, const char* output_file) {
+    FILE* outfp = fopen(output_file, "wb");
+    if (!outfp) return -1;
+    
+    /* Create GZIP compressor */
+    const TZStrm* zstrm = zstrm_create(ZSTRM_DEFLATE | ZSTRM_GZIP, 9, NULL);
+    if (!zstrm) {
+        fclose(outfp);
+        return -1;
+    }
+    
+    /* Set output callback */
+    zstrm_settargetfn(zstrm, write_to_file, outfp);
+    
+    /* Read and compress data */
+    FILE* infp = fopen(input_file, "rb");
+    if (infp) {
+        unsigned char buffer[4096];
+        size_t bytes;
+        
+        while ((bytes = fread(buffer, 1, sizeof(buffer), infp)) > 0) {
+            zstrm_deflate(zstrm, buffer, bytes);
+            if (zstrm->error) break;
+        }
+        
+        fclose(infp);
+    }
+    
+    /* Finalize compression */
+    zstrm_flush(zstrm, 1);
+    
+    int result = zstrm->error ? -1 : 0;
+    zstrm_destroy(zstrm);
+    fclose(outfp);
+    
+    return result;
+}
+```
+
+## Decompression
+
+Decompress data into a target buffer:
+
+```c
+uintxx total;
+total = zstrm_inflate(zstrm, target, targetsize);
+if (zstrm->error) {
+    /* ... handle errors */
+}
+```
+
+### Complete Decompression Example
+
+```c
+#include <jdeflate/zstrm.h>
+#include <stdio.h>
+
+intxx read_from_file(uint8* buffer, uintxx size, void* user) {
+    FILE* fp = (FILE*)user;
+    return (intxx)fread(buffer, 1, size, fp);
+}
+
+int decompress_from_gzip(const char* input_file, const char* output_file) {
+    FILE* infp = fopen(input_file, "rb");
+    FILE* outfp = fopen(output_file, "wb");
+    if (!infp || !outfp) return -1;
+    
+    /* Create decompressor (auto-detects format) */
+    const TZStrm* zstrm = zstrm_create(ZSTRM_INFLATE, 0, NULL);
+    if (!zstrm) {
+        fclose(infp);
+        fclose(outfp);
+        return -1;
+    }
+    
+    /* Set source callback */
+    zstrm_setsourcefn(zstrm, read_from_file, infp);
+    
+    /* Decompress data */
+    unsigned char buffer[4096];
+    uintxx total;
+    
+    while ((total = zstrm_inflate(zstrm, buffer, sizeof(buffer))) > 0) {
+        fwrite(buffer, 1, total, outfp);
+        if (zstrm->error) break;
+    }
+    
+    int result = zstrm->error ? -1 : 0;
+    zstrm_destroy(zstrm);
+    fclose(infp);
+    fclose(outfp);
+    
+    return result;
+}
+```
+
+## Flushing and Finalization
+
+### Flushing Compressed Data
+
+Always flush when finishing compression:
+
+```c
+zstrm_flush(zstrm, 1);
+if (zstrm->error) {
+    /* ... handle errors */
+}
+```
+
+<Warning>
+  **Important**: Always call `zstrm_flush(zstrm, 1)` to finalize compression. This emits any pending data and properly terminates the stream.
+</Warning>
+
+## Error Handling
+
+Check the error field after operations:
+
+| Error Code | Description |
+|------------|-------------|
+| `ZSTRM_OK` | No error |
+| `ZSTRM_EIOERROR` | I/O callback error |
+| `ZSTRM_EOOM` | Out of memory |
+| `ZSTRM_EBADDATA` | Corrupted data |
+| `ZSTRM_ECHECKSUM` | Checksum mismatch |
+| `ZSTRM_EFORMAT` | Invalid format |
+| `ZSTRM_EMISSINGDICT` | Dictionary required |
+| `ZSTRM_EINCORRECTUSE` | API misuse |
+
+```c
+if (zstrm->error) {
+    switch (zstrm->error) {
+        case ZSTRM_ECHECKSUM:
+            fprintf(stderr, "Checksum verification failed\n");
+            break;
+        case ZSTRM_EBADDATA:
+            fprintf(stderr, "Corrupted compressed data\n");
+            break;
+        case ZSTRM_EIOERROR:
+            fprintf(stderr, "I/O error in callback\n");
+            break;
+        default:
+            fprintf(stderr, "Error: %u\n", zstrm->error);
+    }
+}
+```
+
+## Advanced Features
+
+### Using Dictionaries
+
+Set a compression/decompression dictionary:
+
+```c
+zstrm_setdctn(zstrm, dict, dictsize);
+```
+
+### Resetting the Stream
+
+Reuse the stream for new data:
+
+```c
+zstrm_reset(zstrm);
+```
+
+### Accessing Stream Information
+
+The `TZStrm` struct provides useful information:
+
+```c
+/* Total bytes processed */
+uintxx total_bytes = zstrm->total;
+
+/* Stream state */
+uint32 state = zstrm->state;  /* ZSTRM_NOTSET, ZSTRM_READY, etc. */
+
+/* Checksums (if applicable) */
+uint32 crc = zstrm->crc;
+uint32 adler = zstrm->adler;
+```
+
+## Checksum Utilities
+
+ZStrm provides utility functions for checksums:
+
+```c
+/* Update CRC32 checksum */
+uint32 crc = zstrm_crc32update(0, data, size);
+
+/* Update Adler32 checksum */
+uint32 adler = zstrm_adler32update(1, data, size);
+
+/* Combine two CRC32 checksums */
+uint32 combined = zstrm_crc32combine(crc1, crc2, size2);
+```
+
+## Cleanup
+
+Always destroy the stream when finished:
+
+```c
+zstrm_destroy(zstrm);
+```
+
+## Complete Examples
+
+For complete working examples and test code, check the [jdeflate-test repository](https://github.com/Jpn666/jdeflate-test).
+
+<Note>
+  ZStrm is built on top of the lower-level [deflator](/guides/compression) and [inflator](/guides/decompression) modules, providing a more convenient interface for common use cases.
+</Note>

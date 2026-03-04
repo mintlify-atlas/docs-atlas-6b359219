@@ -1,0 +1,131 @@
+---
+title: Inflator Types & Constants
+description: Type definitions and constants for the Inflator decompression interface
+---
+
+## TInflator
+
+The main inflator state structure that maintains decompression state and stream buffers.
+
+```c
+struct TInflator {
+    const uint32 state;
+    const uint32 error;
+    const uint32 flags;
+    const uint32 finalinput;
+    const uint32 status;
+    
+    const uint8* source;
+    const uint8* sbgn;
+    const uint8* send;
+    
+    uint8* target;
+    uint8* tbgn;
+    uint8* tend;
+};
+```
+
+### Fields
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `state` | `uint32` | Internal state machine value |
+| `error` | `uint32` | Current error code (see eINFLTError) |
+| `flags` | `uint32` | Configuration flags |
+| `finalinput` | `uint32` | Indicates if final input chunk has been provided |
+| `status` | `uint32` | Last result from inflate call |
+| `source` | `const uint8*` | Current position in source buffer |
+| `sbgn` | `const uint8*` | Beginning of source buffer |
+| `send` | `const uint8*` | End of source buffer |
+| `target` | `uint8*` | Current position in target buffer |
+| `tbgn` | `uint8*` | Beginning of target buffer |
+| `tend` | `uint8*` | End of target buffer |
+
+<Note>
+All fields are const-qualified to prevent direct modification. Use the provided API functions to interact with the inflator state.
+</Note>
+
+## eINFLTResult
+
+Return codes from the `inflator_inflate()` function indicating the result of a decompression operation.
+
+```c
+typedef enum {
+    INFLT_OK        = 0,
+    INFLT_SRCEXHSTD = 1,
+    INFLT_TGTEXHSTD = 2,
+    INFLT_ERROR     = 3
+} eINFLTResult;
+```
+
+### Values
+
+| Value | Description |
+|-------|-------------|
+| `INFLT_OK` | Operation completed successfully |
+| `INFLT_SRCEXHSTD` | Source buffer exhausted, more input needed |
+| `INFLT_TGTEXHSTD` | Target buffer exhausted, more output space needed |
+| `INFLT_ERROR` | An error occurred during decompression |
+
+### Usage
+
+When `INFLT_SRCEXHSTD` is returned, provide more compressed data by calling `inflator_setsrc()` with a new buffer. When `INFLT_TGTEXHSTD` is returned, process the decompressed data in the target buffer and provide a new target buffer with `inflator_settgt()`.
+
+## eINFLTError
+
+Error codes that indicate specific failure conditions during decompression.
+
+```c
+typedef enum {
+    INFLT_EBADSTATE     = 1,
+    INFLT_EBADCODE      = 2,
+    INFLT_EBADTREE      = 3,
+    INFLT_EFAROFFSET    = 4,
+    INFLT_EBADBLOCK     = 5,
+    INFLT_EINPUTEND     = 6,
+    INFLT_EOOM          = 7,
+    INFLT_EINCORRECTUSE = 8
+} eINFLTError;
+```
+
+### Values
+
+| Value | Description |
+|-------|-------------|
+| `INFLT_EBADSTATE` | Inflator is in an invalid state |
+| `INFLT_EBADCODE` | Invalid or corrupted Huffman code encountered |
+| `INFLT_EBADTREE` | Invalid Huffman tree structure in compressed data |
+| `INFLT_EFAROFFSET` | Back-reference offset exceeds window size |
+| `INFLT_EBADBLOCK` | Invalid or corrupted block header |
+| `INFLT_EINPUTEND` | Unexpected end of input data |
+| `INFLT_EOOM` | Out of memory error |
+| `INFLT_EINCORRECTUSE` | API was used incorrectly |
+
+<Note>
+The `INFLT_EINCORRECTUSE` error is triggered when attempting to set new source data after marking the input as final. Once you call `inflator_inflate()` with `final=1`, you cannot provide additional input data.
+</Note>
+
+### Error Categories
+
+#### Data Corruption Errors
+
+Errors `INFLT_EBADCODE`, `INFLT_EBADTREE`, `INFLT_EFAROFFSET`, and `INFLT_EBADBLOCK` typically indicate corrupted or invalid compressed data. These errors mean the input stream does not conform to the DEFLATE specification.
+
+#### Stream Errors
+
+`INFLT_EINPUTEND` indicates that the compressed stream ended unexpectedly, possibly due to truncated input or incomplete transmission.
+
+#### Usage Errors
+
+`INFLT_EBADSTATE` and `INFLT_EINCORRECTUSE` indicate incorrect API usage. Check your code to ensure you're following the proper decompression workflow:
+
+```c
+do {
+    inflator_setsrc(state, source, sourcesize);
+    do {
+        inflator_settgt(state, target, targetsize);
+        result = inflator_inflate(state, final);
+        // Process target buffer
+    } while (result == INFLT_TGTEXHSTD);
+} while (result == INFLT_SRCEXHSTD);
+```

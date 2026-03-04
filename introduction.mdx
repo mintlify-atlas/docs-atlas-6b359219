@@ -1,0 +1,144 @@
+---
+title: Introduction to Jdeflate
+description: A compact, stream-focused compression library offering a simplified interface for DEFLATE compression and decompression
+---
+
+## What is Jdeflate?
+
+Jdeflate is a compact, stream-focused compression library that offers a simplified interface for DEFLATE compression and decompression. It processes data in a stream format, making it ideal for efficiently handling large datasets without loading everything into memory at once.
+
+While Jdeflate doesn't aim to replace the comprehensive capabilities of more established libraries like zLib, it satisfies many common use cases with a clean API and predictable performance characteristics.
+
+## Key Features
+
+<CardGroup cols={2}>
+  <Card title="Stream-Oriented API" icon="water">
+    Process large datasets efficiently without loading everything into memory. Perfect for file compression, network streams, and real-time data processing.
+  </Card>
+  
+  <Card title="Written in C99" icon="code">
+    Pure C implementation ensures maximum compatibility and portability across platforms.
+  </Card>
+  
+  <Card title="Portable" icon="globe">
+    Works on any platform with a C99-compliant compiler. No platform-specific dependencies required.
+  </Card>
+  
+  <Card title="Predictable Memory" icon="memory">
+    Consistent memory allocation patterns make it easy to reason about resource usage in your application.
+  </Card>
+</CardGroup>
+
+### Additional Features
+
+- **Good performance**: Optimized implementation with optional assembly acceleration for x86-64
+- **Multiple format support**: Raw DEFLATE, zlib, and gzip formats through the `zstrm` API
+- **Flexible I/O**: Buffer-based or callback-based I/O for maximum flexibility
+- **Custom allocators**: Bring your own memory allocator if needed
+
+## Use Cases
+
+Jdeflate is well-suited for:
+
+- **File compression**: Compress and decompress files in various formats (gzip, zlib, raw DEFLATE)
+- **Network protocols**: Stream compression for HTTP, WebSocket, or custom protocols
+- **Data pipelines**: Process large data streams without buffering everything in memory
+- **Embedded systems**: Predictable memory usage and small footprint
+- **Real-time processing**: Stream-oriented design allows incremental processing
+
+## Comparison to zlib
+
+<Note>
+Jdeflate is **not** a drop-in replacement for zlib. It's designed with different goals in mind.
+</Note>
+
+| Feature | Jdeflate | zlib |
+|---------|----------|------|
+| API Design | Stream-focused, simplified | Comprehensive, feature-rich |
+| Memory Pattern | Predictable allocation | Variable allocation |
+| Format Support | DEFLATE, zlib, gzip (via zstrm) | DEFLATE, zlib, gzip + more |
+| Codebase Size | Compact | Extensive |
+| Learning Curve | Gentle | Steeper |
+| Advanced Features | Limited | Extensive (dictionary, strategies, etc.) |
+
+### When to Choose Jdeflate
+
+Choose Jdeflate when you:
+- Want a simple, easy-to-understand compression API
+- Need predictable memory allocation patterns
+- Prefer a smaller, more focused library
+- Are building stream-oriented applications
+- Value code clarity and maintainability
+
+### When to Choose zlib
+
+Choose zlib when you:
+- Need advanced compression strategies and tuning
+- Require extensive format support
+- Need battle-tested code with decades of production use
+- Want maximum compatibility with existing tools
+- Need features like preset dictionaries and fine-grained control
+
+## Core APIs
+
+Jdeflate provides three main header files:
+
+<CodeGroup>
+
+```c Low-Level Compression
+#include <jdeflate/deflator.h>
+
+TDeflator* deflator;
+deflator = deflator_create(0, 6, NULL);
+```
+
+```c Low-Level Decompression
+#include <jdeflate/inflator.h>
+
+TInflator* inflator;
+inflator = inflator_create(0, NULL);
+```
+
+```c High-Level API
+#include <jdeflate/zstrm.h>
+
+/* Supports zlib, gzip, and raw DEFLATE */
+const TZStrm* zstrm;
+zstrm = zstrm_create(ZSTRM_DEFLATE | ZSTRM_GZIP, 9, NULL);
+```
+
+</CodeGroup>
+
+### Low-Level API: `deflator.h` and `inflator.h`
+
+The low-level APIs provide direct access to raw DEFLATE compression and decompression:
+
+- Fine-grained control over the compression/decompression process
+- Stream-oriented design with explicit buffer management
+- Return codes indicate when more input is needed or output is available
+- Suitable for custom protocol implementations
+
+### High-Level API: `zstrm.h`
+
+The high-level `zstrm` API simplifies common tasks:
+
+- Automatic handling of zlib, gzip, and raw DEFLATE formats
+- Callback-based I/O for seamless integration with files and streams
+- Built-in checksum handling (CRC32 for gzip, Adler32 for zlib)
+- Simplified error handling
+
+<Note>
+Most users should start with the `zstrm` API and only use the low-level APIs when fine-grained control is needed.
+</Note>
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Installation" icon="download" href="/installation">
+    Learn how to build and install Jdeflate using Meson
+  </Card>
+  
+  <Card title="Quick Start" icon="rocket" href="/quickstart">
+    Get started with a complete working example
+  </Card>
+</CardGroup>

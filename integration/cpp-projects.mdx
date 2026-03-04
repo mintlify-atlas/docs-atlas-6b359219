@@ -1,0 +1,321 @@
+---
+title: "C++ Projects"
+description: "Integrate Jdeflate into C++ projects using extern C blocks, CMake, and modern build systems"
+---
+
+While Jdeflate is written in C99, it integrates seamlessly into C++ projects. This guide covers the proper integration patterns.
+
+## Including Headers in C++
+
+Wrap the Jdeflate headers in `extern "C"` blocks to prevent name mangling:
+
+<CodeGroup>
+```cpp Deflator and Inflator
+extern "C" {
+    #include <jdeflate/deflator.h>
+    #include <jdeflate/inflator.h>
+}
+```
+
+```cpp ZStrm API
+extern "C" {
+    #include <jdeflate/zstrm.h>
+}
+```
+
+```cpp All Headers
+extern "C" {
+    #include <jdeflate/deflator.h>
+    #include <jdeflate/inflator.h>
+    #include <jdeflate/zstrm.h>
+}
+```
+</CodeGroup>
+
+<Note>
+The `extern "C"` block ensures the C functions are not name-mangled by the C++ compiler.
+</Note>
+
+## CMake Integration
+
+Integrate Jdeflate into your CMake project using `find_package` or pkg-config:
+
+<Steps>
+  <Step title="Using pkg-config">
+    ```cmake
+    cmake_minimum_required(VERSION 3.10)
+    project(MyApp)
+    
+    # Find pkg-config
+    find_package(PkgConfig REQUIRED)
+    
+    # Find jdeflate using pkg-config
+    pkg_check_modules(JDEFLATE REQUIRED jdeflate)
+    
+    add_executable(myapp main.cpp)
+    
+    target_include_directories(myapp PRIVATE ${JDEFLATE_INCLUDE_DIRS})
+    target_link_libraries(myapp PRIVATE ${JDEFLATE_LIBRARIES})
+    target_link_directories(myapp PRIVATE ${JDEFLATE_LIBRARY_DIRS})
+    ```
+  </Step>
+  
+  <Step title="Manual Configuration">
+    ```cmake
+    cmake_minimum_required(VERSION 3.10)
+    project(MyApp)
+    
+    # Manually specify paths
+    set(JDEFLATE_INCLUDE_DIR "/usr/local/include")
+    set(JDEFLATE_LIBRARY_DIR "/usr/local/lib")
+    
+    add_executable(myapp main.cpp)
+    
+    target_include_directories(myapp PRIVATE ${JDEFLATE_INCLUDE_DIR})
+    target_link_libraries(myapp PRIVATE jdeflate)
+    target_link_directories(myapp PRIVATE ${JDEFLATE_LIBRARY_DIR})
+    ```
+  </Step>
+  
+  <Step title="Modern CMake (Imported Target)">
+    ```cmake
+    cmake_minimum_required(VERSION 3.10)
+    project(MyApp)
+    
+    find_package(PkgConfig REQUIRED)
+    pkg_check_modules(JDEFLATE REQUIRED IMPORTED_TARGET jdeflate)
+    
+    add_executable(myapp main.cpp)
+    target_link_libraries(myapp PRIVATE PkgConfig::JDEFLATE)
+    ```
+  </Step>
+</Steps>
+
+## C++ Wrapper Example
+
+Create a C++ wrapper class for type safety and RAII:
+
+```cpp
+#include <memory>
+#include <stdexcept>
+#include <vector>
+
+extern "C" {
+    #include <jdeflate/deflator.h>
+    #include <jdeflate/inflator.h>
+}
+
+class Deflator {
+public:
+    Deflator(int level = 6) {
+        deflator_ = deflator_create(0, level, nullptr);
+        if (!deflator_) {
+            throw std::runtime_error("Failed to create deflator");
+        }
+    }
+    
+    ~Deflator() {
+        if (deflator_) {
+            deflator_destroy(deflator_);
+        }
+    }
+    
+    // Delete copy operations
+    Deflator(const Deflator&) = delete;
+    Deflator& operator=(const Deflator&) = delete;
+    
+    // Allow move operations
+    Deflator(Deflator&& other) noexcept : deflator_(other.deflator_) {
+        other.deflator_ = nullptr;
+    }
+    
+    std::vector<uint8_t> compress(const std::vector<uint8_t>& input) {
+        std::vector<uint8_t> output(input.size() * 2);
+        
+        deflator_setsrc(deflator_, input.data(), input.size());
+        deflator_settgt(deflator_, output.data(), output.size());
+        
+        unsigned int status = deflator_deflate(deflator_, 1);
+        if (status != DEFLT_OK) {
+            throw std::runtime_error("Compression failed");
+        }
+        
+        output.resize(deflator_tgtend(deflator_));
+        return output;
+    }
+    
+private:
+    TDeflator* deflator_;
+};
+
+class Inflator {
+public:
+    Inflator() {
+        inflator_ = inflator_create(0, nullptr);
+        if (!inflator_) {
+            throw std::runtime_error("Failed to create inflator");
+        }
+    }
+    
+    ~Inflator() {
+        if (inflator_) {
+            inflator_destroy(inflator_);
+        }
+    }
+    
+    // Delete copy operations
+    Inflator(const Inflator&) = delete;
+    Inflator& operator=(const Inflator&) = delete;
+    
+    // Allow move operations
+    Inflator(Inflator&& other) noexcept : inflator_(other.inflator_) {
+        other.inflator_ = nullptr;
+    }
+    
+    std::vector<uint8_t> decompress(const std::vector<uint8_t>& input, size_t max_size) {
+        std::vector<uint8_t> output(max_size);
+        
+        inflator_setsrc(inflator_, input.data(), input.size());
+        inflator_settgt(inflator_, output.data(), output.size());
+        
+        unsigned int status = inflator_inflate(inflator_, 1);
+        if (status != INFLT_OK) {
+            throw std::runtime_error("Decompression failed");
+        }
+        
+        output.resize(inflator_tgtend(inflator_));
+        return output;
+    }
+    
+private:
+    TInflator* inflator_;
+};
+```
+
+## Using the C++ Wrapper
+
+```cpp
+#include <iostream>
+#include <string>
+
+int main() {
+    try {
+        std::string input = "Hello, World! This is a test message.";
+        std::vector<uint8_t> data(input.begin(), input.end());
+        
+        // Compress
+        Deflator deflator(9);
+        auto compressed = deflator.compress(data);
+        std::cout << "Compressed " << data.size() 
+                  << " bytes to " << compressed.size() << " bytes\n";
+        
+        // Decompress
+        Inflator inflator;
+        auto decompressed = inflator.decompress(compressed, data.size());
+        
+        std::string result(decompressed.begin(), decompressed.end());
+        std::cout << "Decompressed: " << result << "\n";
+        
+    } catch (const std::exception& e) {
+        std::cerr << "Error: " << e.what() << "\n";
+        return 1;
+    }
+    
+    return 0;
+}
+```
+
+## Makefile for C++
+
+For Make-based C++ projects:
+
+```makefile
+CXX = g++
+CXXFLAGS = -std=c++17 -Wall -O2 $(shell pkg-config --cflags jdeflate)
+LDFLAGS = $(shell pkg-config --libs jdeflate)
+
+myapp: main.o
+	$(CXX) -o $@ $^ $(LDFLAGS)
+
+main.o: main.cpp
+	$(CXX) $(CXXFLAGS) -c $<
+
+clean:
+	rm -f myapp main.o
+```
+
+## Stream-Based C++ Example
+
+For large files or streaming data:
+
+```cpp
+extern "C" {
+    #include <jdeflate/deflator.h>
+}
+
+#include <fstream>
+#include <vector>
+
+void compressFile(const std::string& input_path, const std::string& output_path) {
+    TDeflator* deflator = deflator_create(0, 6, nullptr);
+    if (!deflator) {
+        throw std::runtime_error("Failed to create deflator");
+    }
+    
+    std::ifstream input(input_path, std::ios::binary);
+    std::ofstream output(output_path, std::ios::binary);
+    
+    std::vector<uint8_t> source(4096);
+    std::vector<uint8_t> target(8192);
+    
+    unsigned int status;
+    bool final = false;
+    
+    do {
+        input.read(reinterpret_cast<char*>(source.data()), source.size());
+        size_t bytes_read = input.gcount();
+        
+        if (input.eof() || bytes_read < source.size()) {
+            final = true;
+        }
+        
+        deflator_setsrc(deflator, source.data(), bytes_read);
+        
+        do {
+            deflator_settgt(deflator, target.data(), target.size());
+            
+            status = deflator_deflate(deflator, final);
+            
+            size_t bytes_written = deflator_tgtend(deflator);
+            output.write(reinterpret_cast<char*>(target.data()), bytes_written);
+            
+        } while (status == DEFLT_TGTEXHSTD);
+    } while (status == DEFLT_SRCEXHSTD);
+    
+    if (status != DEFLT_OK) {
+        deflator_destroy(deflator);
+        throw std::runtime_error("Compression failed");
+    }
+    
+    deflator_destroy(deflator);
+}
+```
+
+<Warning>
+Always destroy Jdeflate objects before program termination to prevent memory leaks. Consider using RAII wrappers as shown above.
+</Warning>
+
+## Compiler Flags
+
+When compiling manually:
+
+```bash
+g++ -std=c++17 -I/usr/local/include -c main.cpp
+g++ -o myapp main.o -L/usr/local/lib -ljdeflate
+```
+
+## Next Steps
+
+- Learn about [Windows DLL](/integration/windows-dll) integration for Windows platforms
+- Explore [Meson subproject](/integration/meson-subproject) for Meson-based builds
+- See [C Projects](/integration/c-projects) for pure C usage patterns

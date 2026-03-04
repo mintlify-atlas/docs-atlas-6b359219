@@ -1,0 +1,272 @@
+---
+title: "C Projects"
+description: "Learn how to integrate Jdeflate into your C projects using headers, pkg-config, and compiler flags"
+---
+
+Jdeflate is written in C99 and provides a straightforward API for compression and decompression. This guide covers integration into C projects.
+
+## Including Headers
+
+Each module is independent, so you can include only what you need:
+
+```c
+#include <jdeflate/deflator.h>
+#include <jdeflate/inflator.h>
+```
+
+For the high-level zstrm API:
+
+```c
+#include <jdeflate/zstrm.h>
+```
+
+## Linking with pkg-config
+
+After installing Jdeflate, use pkg-config to get the correct compiler and linker flags:
+
+```bash
+gcc -o myapp main.c $(pkg-config --cflags --libs jdeflate)
+```
+
+<Note>
+pkg-config is available after running `meson install` from the build directory.
+</Note>
+
+## Compiler Requirements
+
+<Steps>
+  <Step title="C99 Compliance">
+    Ensure your compiler supports C99:
+    
+    ```bash
+    gcc -std=c99 -c myapp.c
+    ```
+  </Step>
+  
+  <Step title="Include Directories">
+    Add the installation prefix to your include path:
+    
+    ```bash
+    gcc -I/usr/local/include -c myapp.c
+    ```
+  </Step>
+  
+  <Step title="Link the Library">
+    Link against the Jdeflate library:
+    
+    ```bash
+    gcc -o myapp myapp.o -L/usr/local/lib -ljdeflate
+    ```
+  </Step>
+</Steps>
+
+## Basic Example
+
+Here's a complete example demonstrating compression and decompression:
+
+<CodeGroup>
+```c Compression
+#include <jdeflate/deflator.h>
+#include <stdio.h>
+#include <stdbool.h>
+
+int main(void) {
+    TDeflator* deflator;
+    unsigned int status;
+    bool final;
+    
+    unsigned char source[1024];
+    unsigned char target[2048];
+    size_t sourcesize = /* ... */;
+    size_t targetsize = sizeof(target);
+    
+    /* Create deflator with compression level 6 */
+    deflator = deflator_create(0, 6, NULL);
+    if (deflator == NULL) {
+        fprintf(stderr, "Failed to create deflator\n");
+        return 1;
+    }
+    
+    final = 0;
+    do {
+        /* Read or fetch some data into the source buffer */
+        deflator_setsrc(deflator, source, sourcesize);
+        if (/* no more input */) {
+            final = 1;
+        }
+        
+        do {
+            deflator_settgt(deflator, target, targetsize);
+            
+            status = deflator_deflate(deflator, final);
+            /* target buffer now contains compressed data */
+            /* use deflator_tgtend(deflator) to get bytes written */
+        } while (status == DEFLT_TGTEXHSTD);
+    } while (status == DEFLT_SRCEXHSTD);
+    
+    /* Check for errors */
+    if (status == DEFLT_OK) {
+        printf("Compression successful\n");
+    } else {
+        fprintf(stderr, "Compression failed\n");
+    }
+    
+    deflator_destroy(deflator);
+    return 0;
+}
+```
+
+```c Decompression
+#include <jdeflate/inflator.h>
+#include <stdio.h>
+#include <stdbool.h>
+
+int main(void) {
+    TInflator* inflator;
+    unsigned int status;
+    bool final;
+    
+    unsigned char source[2048];
+    unsigned char target[1024];
+    size_t sourcesize = /* ... */;
+    size_t targetsize = sizeof(target);
+    
+    /* Create inflator */
+    inflator = inflator_create(0, NULL);
+    if (inflator == NULL) {
+        fprintf(stderr, "Failed to create inflator\n");
+        return 1;
+    }
+    
+    final = 0;
+    do {
+        /* Read compressed data into source buffer */
+        inflator_setsrc(inflator, source, sourcesize);
+        if (/* no more input */) {
+            final = 1;
+        }
+        
+        do {
+            inflator_settgt(inflator, target, targetsize);
+            
+            status = inflator_inflate(inflator, final);
+            /* target buffer now contains decompressed data */
+            /* use inflator_tgtend(inflator) to get bytes written */
+        } while (status == INFLT_TGTEXHSTD);
+    } while (status == INFLT_SRCEXHSTD);
+    
+    /* Check for errors */
+    if (status == INFLT_OK) {
+        printf("Decompression successful\n");
+    } else {
+        fprintf(stderr, "Decompression failed\n");
+    }
+    
+    inflator_destroy(inflator);
+    return 0;
+}
+```
+
+```c Simplified Mode
+#include <jdeflate/deflator.h>
+#include <jdeflate/inflator.h>
+#include <stdio.h>
+
+int main(void) {
+    TDeflator* deflator;
+    unsigned char source[1024] = "Hello, World!";
+    unsigned char compressed[2048];
+    unsigned char decompressed[1024];
+    
+    /* Compress in one shot */
+    deflator = deflator_create(0, 6, NULL);
+    deflator_setsrc(deflator, source, 13);
+    deflator_settgt(deflator, compressed, sizeof(compressed));
+    
+    if (deflator_deflate(deflator, 1) != DEFLT_OK) {
+        fprintf(stderr, "Compression failed\n");
+        return 1;
+    }
+    
+    size_t compressed_size = deflator_tgtend(deflator);
+    printf("Compressed %zu bytes\n", compressed_size);
+    deflator_destroy(deflator);
+    
+    /* Decompress in one shot */
+    TInflator* inflator = inflator_create(0, NULL);
+    inflator_setsrc(inflator, compressed, compressed_size);
+    inflator_settgt(inflator, decompressed, sizeof(decompressed));
+    
+    if (inflator_inflate(inflator, 1) != INFLT_OK) {
+        fprintf(stderr, "Decompression failed\n");
+        return 1;
+    }
+    
+    printf("Decompressed: %s\n", decompressed);
+    inflator_destroy(inflator);
+    
+    return 0;
+}
+```
+</CodeGroup>
+
+## Makefile Integration
+
+For traditional Make-based projects:
+
+```makefile
+CC = gcc
+CFLAGS = -std=c99 -Wall -O2 $(shell pkg-config --cflags jdeflate)
+LDFLAGS = $(shell pkg-config --libs jdeflate)
+
+myapp: myapp.o
+	$(CC) -o $@ $^ $(LDFLAGS)
+
+myapp.o: myapp.c
+	$(CC) $(CFLAGS) -c $<
+
+clean:
+	rm -f myapp myapp.o
+```
+
+## Manual Linking
+
+If pkg-config is not available:
+
+```bash
+gcc -std=c99 -I/usr/local/include -c myapp.c
+gcc -o myapp myapp.o -L/usr/local/lib -ljdeflate
+```
+
+<Warning>
+Ensure the library path is in your `LD_LIBRARY_PATH` when using shared libraries:
+```bash
+export LD_LIBRARY_PATH=/usr/local/lib:$LD_LIBRARY_PATH
+```
+</Warning>
+
+## Return Codes
+
+### Deflator Status Codes
+
+| Code | Description |
+|------|-------------|
+| `DEFLT_OK` | Operation completed successfully |
+| `DEFLT_SRCEXHSTD` | Source buffer exhausted, provide more input |
+| `DEFLT_TGTEXHSTD` | Target buffer exhausted, provide more output space |
+| `DEFLT_ERROR` | An error occurred, check deflator->error |
+
+### Inflator Status Codes
+
+| Code | Description |
+|------|-------------|
+| `INFLT_OK` | Operation completed successfully |
+| `INFLT_SRCEXHSTD` | Source buffer exhausted, provide more input |
+| `INFLT_TGTEXHSTD` | Target buffer exhausted, provide more output space |
+| `INFLT_ERROR` | An error occurred, check inflator->error |
+
+## Next Steps
+
+- Learn about [C++ integration](/integration/cpp-projects) for C++ projects
+- Explore [Meson subproject](/integration/meson-subproject) integration
+- Check [Windows DLL](/integration/windows-dll) support for Windows builds

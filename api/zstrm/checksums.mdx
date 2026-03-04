@@ -1,0 +1,354 @@
+---
+title: 'Checksum Functions'
+description: 'CRC32 and Adler32 checksum utilities'
+---
+
+## Overview
+
+The ZStrm library provides checksum functions that can be used independently of compression operations. These are useful for verifying data integrity, computing file checksums, or implementing custom protocols.
+
+## Functions
+
+### zstrm_crc32update
+
+```c
+uint32 zstrm_crc32update(uint32 chcksm, const uint8* source, uintxx size);
+```
+
+Updates a CRC32 checksum with new data.
+
+<ParamField path="chcksm" type="uint32" required>
+  Current CRC32 checksum value. Use `0` to start a new checksum calculation.
+</ParamField>
+
+<ParamField path="source" type="const uint8*" required>
+  Pointer to the data to include in the checksum.
+</ParamField>
+
+<ParamField path="size" type="uintxx" required>
+  Number of bytes to process from the source.
+</ParamField>
+
+<ResponseField name="return" type="uint32">
+  Updated CRC32 checksum value.
+</ResponseField>
+
+### zstrm_crc32combine
+
+```c
+uint32 zstrm_crc32combine(uint32 crc1, uint32 crc2, uintxx size2);
+```
+
+Combines two CRC32 checksums as if the corresponding data blocks were concatenated.
+
+<ParamField path="crc1" type="uint32" required>
+  CRC32 checksum of the first data block.
+</ParamField>
+
+<ParamField path="crc2" type="uint32" required>
+  CRC32 checksum of the second data block.
+</ParamField>
+
+<ParamField path="size2" type="uintxx" required>
+  Size in bytes of the second data block (the one corresponding to `crc2`).
+</ParamField>
+
+<ResponseField name="return" type="uint32">
+  Combined CRC32 checksum, equivalent to calculating the CRC32 of data1 + data2.
+</ResponseField>
+
+### zstrm_adler32update
+
+```c
+uint32 zstrm_adler32update(uint32 chcksm, const uint8* source, uintxx size);
+```
+
+Updates an Adler32 checksum with new data.
+
+<ParamField path="chcksm" type="uint32" required>
+  Current Adler32 checksum value. Use `1` to start a new checksum calculation (Adler32 initial value is 1, not 0).
+</ParamField>
+
+<ParamField path="source" type="const uint8*" required>
+  Pointer to the data to include in the checksum.
+</ParamField>
+
+<ParamField path="size" type="uintxx" required>
+  Number of bytes to process from the source.
+</ParamField>
+
+<ResponseField name="return" type="uint32">
+  Updated Adler32 checksum value.
+</ResponseField>
+
+## Examples
+
+### Calculate CRC32 of a File
+
+```c
+#include <jdeflate/zstrm.h>
+
+uint32 calculate_file_crc32(const char* filepath) {
+    FILE* fp = fopen(filepath, "rb");
+    uint8 buffer[8192];
+    uint32 crc = 0;  /* Initial CRC32 value */
+    
+    if (!fp) {
+        return 0;
+    }
+    
+    while (!feof(fp)) {
+        size_t bytes_read = fread(buffer, 1, sizeof(buffer), fp);
+        if (bytes_read > 0) {
+            crc = zstrm_crc32update(crc, buffer, bytes_read);
+        }
+    }
+    
+    fclose(fp);
+    return crc;
+}
+
+/* Usage */
+uint32 crc = calculate_file_crc32("data.bin");
+printf("CRC32: 0x%08X\n", crc);
+```
+
+### Calculate CRC32 of a String
+
+```c
+const char* data = "Hello, World!";
+uint32 crc = zstrm_crc32update(0, (const uint8*)data, strlen(data));
+printf("CRC32 of '%s': 0x%08X\n", data, crc);
+```
+
+### Incremental CRC32 Calculation
+
+```c
+uint32 crc = 0;
+
+/* Process data in chunks */
+const char* chunk1 = "Hello, ";
+const char* chunk2 = "World!";
+
+crc = zstrm_crc32update(crc, (const uint8*)chunk1, strlen(chunk1));
+crc = zstrm_crc32update(crc, (const uint8*)chunk2, strlen(chunk2));
+
+printf("Combined CRC32: 0x%08X\n", crc);
+```
+
+### Combine Separate CRC32 Values
+
+```c
+const char* data1 = "Hello, ";
+const char* data2 = "World!";
+
+/* Calculate CRC of each part separately */
+uint32 crc1 = zstrm_crc32update(0, (const uint8*)data1, strlen(data1));
+uint32 crc2 = zstrm_crc32update(0, (const uint8*)data2, strlen(data2));
+
+/* Combine them */
+uint32 combined = zstrm_crc32combine(crc1, crc2, strlen(data2));
+
+/* Verify: should match calculating CRC of concatenated data */
+char full_data[100];
+snprintf(full_data, sizeof(full_data), "%s%s", data1, data2);
+uint32 direct = zstrm_crc32update(0, (const uint8*)full_data, strlen(full_data));
+
+printf("Combined CRC: 0x%08X\n", combined);
+printf("Direct CRC:   0x%08X\n", direct);
+printf("Match: %s\n", (combined == direct) ? "Yes" : "No");
+```
+
+### Calculate Adler32 Checksum
+
+```c
+const char* data = "Hello, World!";
+uint32 adler = zstrm_adler32update(1, (const uint8*)data, strlen(data));
+printf("Adler32: 0x%08X\n", adler);
+```
+
+### Verify Data Integrity
+
+```c
+typedef struct {
+    uint8 data[1024];
+    uintxx size;
+    uint32 checksum;
+} DataBlock;
+
+/* Store data with checksum */
+void store_data_block(DataBlock* block, const uint8* data, uintxx size) {
+    memcpy(block->data, data, size);
+    block->size = size;
+    block->checksum = zstrm_crc32update(0, data, size);
+}
+
+/* Verify data integrity */
+int verify_data_block(const DataBlock* block) {
+    uint32 computed = zstrm_crc32update(0, block->data, block->size);
+    return (computed == block->checksum) ? 1 : 0;
+}
+
+/* Usage */
+DataBlock block;
+const char* data = "Important data";
+
+store_data_block(&block, (const uint8*)data, strlen(data));
+
+if (verify_data_block(&block)) {
+    printf("Data integrity verified\n");
+} else {
+    printf("Data corruption detected!\n");
+}
+```
+
+### Parallel CRC32 Calculation
+
+```c
+#include <pthread.h>
+
+typedef struct {
+    const uint8* data;
+    uintxx size;
+    uint32 crc;
+} ChunkData;
+
+void* calculate_chunk_crc(void* arg) {
+    ChunkData* chunk = (ChunkData*)arg;
+    chunk->crc = zstrm_crc32update(0, chunk->data, chunk->size);
+    return NULL;
+}
+
+uint32 parallel_crc32(const uint8* data, uintxx size, int num_threads) {
+    pthread_t threads[num_threads];
+    ChunkData chunks[num_threads];
+    uintxx chunk_size = size / num_threads;
+    
+    /* Calculate CRC for each chunk in parallel */
+    for (int i = 0; i < num_threads; i++) {
+        chunks[i].data = data + (i * chunk_size);
+        chunks[i].size = (i == num_threads - 1) ? 
+                         (size - i * chunk_size) : chunk_size;
+        pthread_create(&threads[i], NULL, calculate_chunk_crc, &chunks[i]);
+    }
+    
+    /* Wait for all threads */
+    for (int i = 0; i < num_threads; i++) {
+        pthread_join(threads[i], NULL);
+    }
+    
+    /* Combine CRCs */
+    uint32 result = chunks[0].crc;
+    for (int i = 1; i < num_threads; i++) {
+        result = zstrm_crc32combine(result, chunks[i].crc, chunks[i].size);
+    }
+    
+    return result;
+}
+```
+
+### Calculate Dictionary ID
+
+```c
+/* Dictionary IDs in zlib are Adler32 checksums */
+uint32 calculate_dictionary_id(const uint8* dict, uintxx size) {
+    return zstrm_adler32update(1, dict, size);
+}
+
+/* Usage */
+const char* dictionary = "common words and phrases";
+uint32 dict_id = calculate_dictionary_id((const uint8*)dictionary, 
+                                         strlen(dictionary));
+printf("Dictionary ID: 0x%08X\n", dict_id);
+```
+
+### Stream Checksum with Progress
+
+```c
+typedef struct {
+    uint32 crc;
+    uintxx total_bytes;
+    void (*progress_callback)(uintxx bytes, uint32 crc, void* user);
+    void* user_data;
+} ChecksumContext;
+
+void update_checksum_with_progress(ChecksumContext* ctx, 
+                                   const uint8* data, 
+                                   uintxx size) {
+    ctx->crc = zstrm_crc32update(ctx->crc, data, size);
+    ctx->total_bytes += size;
+    
+    if (ctx->progress_callback) {
+        ctx->progress_callback(ctx->total_bytes, ctx->crc, ctx->user_data);
+    }
+}
+
+void progress_printer(uintxx bytes, uint32 crc, void* user) {
+    printf("\rProcessed: %llu bytes, CRC: 0x%08X", 
+           (unsigned long long)bytes, crc);
+    fflush(stdout);
+}
+
+/* Usage */
+ChecksumContext ctx = {
+    .crc = 0,
+    .total_bytes = 0,
+    .progress_callback = progress_printer,
+    .user_data = NULL
+};
+
+FILE* fp = fopen("largefile.bin", "rb");
+uint8 buffer[65536];
+
+while (!feof(fp)) {
+    size_t bytes = fread(buffer, 1, sizeof(buffer), fp);
+    if (bytes > 0) {
+        update_checksum_with_progress(&ctx, buffer, bytes);
+    }
+}
+
+fclose(fp);
+printf("\nFinal CRC32: 0x%08X\n", ctx.crc);
+```
+
+## Notes
+
+<Note>
+  These checksum functions can be used independently of compression/decompression operations. They are exported for general-purpose use in applications.
+</Note>
+
+<Note>
+  **CRC32 initial value**: Use `0` when starting a new CRC32 calculation.
+  
+  **Adler32 initial value**: Use `1` when starting a new Adler32 calculation (not `0`).
+</Note>
+
+<Note>
+  The `zstrm_crc32combine()` function is particularly useful for:
+  - Parallel checksum calculation of large files
+  - Incremental verification of data streams
+  - Combining checksums from multiple sources
+</Note>
+
+<Note>
+  CRC32 is slower but provides better error detection than Adler32. Adler32 is faster but slightly less robust. Choose based on your performance vs. reliability requirements.
+</Note>
+
+## Performance Characteristics
+
+### CRC32
+- Better error detection
+- Slower than Adler32
+- Used by: gzip, PNG, Ethernet
+- Good for: Data integrity verification, file checksums
+
+### Adler32
+- Faster than CRC32
+- Simpler algorithm
+- Used by: zlib
+- Good for: Dictionary IDs, quick integrity checks
+
+## See Also
+
+- [zstrm_setdctn](/api/zstrm/zstrm-setdctn) - Uses Adler32 for dictionary IDs
+- [Overview](/api/zstrm/overview) - ZStrm structure shows checksum fields

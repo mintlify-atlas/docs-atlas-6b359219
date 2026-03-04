@@ -1,0 +1,163 @@
+---
+title: 'Deflator API Overview'
+description: 'Stream-oriented deflate encoder for efficient data compression'
+---
+
+## Overview
+
+The Deflator API provides a stream-oriented deflate encoder for compressing data. It is designed for efficient, incremental compression of data streams, allowing you to process data in chunks without loading the entire dataset into memory.
+
+## TDeflator Structure
+
+The `TDeflator` struct is the main handle for deflator operations:
+
+```c
+struct TDeflator {
+    /* state */
+    const uint32 state;
+    const uint32 error;
+    const uint32 flags;
+    const uint32 flush;
+
+    /* last result from deflate call */
+    const uint32 status;
+
+    /* stream buffers */
+    const uint8* source;
+    const uint8* sbgn;
+    const uint8* send;
+
+    uint8* target;
+    uint8* tbgn;
+    uint8* tend;
+};
+```
+
+<Note>
+All fields in the `TDeflator` struct are read-only from the user's perspective. Use the provided API functions to interact with the deflator.
+</Note>
+
+## Typical Workflow
+
+The deflator follows a stream-based processing model:
+
+```c
+do {
+    // Read a chunk of data into source buffer
+    if (/* no more input */)
+        final = 1;
+    
+    deflator_setsrc(state, source, sourcesize);
+    
+    do {
+        deflator_settgt(state, target, targetsize);
+        result = deflator_deflate(state, final);
+
+        // Data from target to deflator_tgtend(state) is the compressed data
+    } while (result == DEFLT_TGTEXHSTD);
+    
+} while (result == DEFLT_SRCEXHSTD);
+
+// Check for errors
+```
+
+### Workflow Steps
+
+1. **Create** a deflator instance with [`deflator_create()`](/api/deflator/deflator-create)
+2. **Set source** data using [`deflator_setsrc()`](/api/deflator/deflator-setsrc)
+3. **Set target** buffer using [`deflator_settgt()`](/api/deflator/deflator-settgt)
+4. **Deflate** data with [`deflator_deflate()`](/api/deflator/deflator-deflate)
+5. **Repeat** steps 2-4 until all data is processed
+6. **Destroy** the deflator with [`deflator_destroy()`](/api/deflator/deflator-destroy)
+
+## Return Codes (eDEFLTResult)
+
+The `deflator_deflate()` function returns one of these status codes:
+
+<ResponseField name="DEFLT_OK" type="0">
+  Operation completed successfully. All source data has been processed and flushed.
+</ResponseField>
+
+<ResponseField name="DEFLT_SRCEXHSTD" type="1">
+  Source buffer exhausted. Set new source data and continue processing.
+</ResponseField>
+
+<ResponseField name="DEFLT_TGTEXHSTD" type="2">
+  Target buffer exhausted. Set a new target buffer and continue processing.
+</ResponseField>
+
+<ResponseField name="DEFLT_ERROR" type="3">
+  An error occurred. Check the `error` field in the `TDeflator` struct.
+</ResponseField>
+
+## Flush Modes (eDEFLTFlush)
+
+Flush modes control how the deflator handles buffered data:
+
+<ParamField path="DEFLT_NOFLUSH" type="0">
+  No flush. Continue normal compression.
+</ParamField>
+
+<ParamField path="DEFLT_END" type="1">
+  End of stream. Flush all buffered data and finalize the stream.
+</ParamField>
+
+<ParamField path="DEFLT_FLUSH" type="2">
+  Flush buffered data. Similar to ZLIB's Z_SYNC_FLUSH - appends a STORED block to ensure the stream is properly terminated.
+</ParamField>
+
+<Warning>
+When flush is `DEFLT_FLUSH` or `DEFLT_END`, do not set new source data until the deflator returns `DEFLT_OK`.
+</Warning>
+
+## Error Codes (eDEFLTError)
+
+Error codes that may appear in the `error` field:
+
+<ResponseField name="DEFLT_EBADSTATE" type="1">
+  Bad state. The deflator is in an invalid state.
+</ResponseField>
+
+<ResponseField name="DEFLT_EOOM" type="2">
+  Out of memory. Memory allocation failed during creation.
+</ResponseField>
+
+<ResponseField name="DEFLT_ELEVEL" type="3">
+  Invalid compression level specified.
+</ResponseField>
+
+<ResponseField name="DEFLT_EINCORRECTUSE" type="4">
+  Incorrect API usage. For example, setting new source data while a flush is pending.
+</ResponseField>
+
+## Flags (eDEFLTFlags)
+
+<ParamField path="DEFLT_FIXEDCODES" type="0x01">
+  Use fixed Huffman codes instead of dynamic codes. This can improve compression speed at the cost of compression ratio.
+</ParamField>
+
+## API Functions
+
+<CardGroup cols={2}>
+  <Card title="deflator_create" icon="plus" href="/api/deflator/deflator-create">
+    Create a new deflator instance
+  </Card>
+  <Card title="deflator_destroy" icon="trash" href="/api/deflator/deflator-destroy">
+    Destroy a deflator instance
+  </Card>
+  <Card title="deflator_deflate" icon="compress" href="/api/deflator/deflator-deflate">
+    Compress data
+  </Card>
+  <Card title="deflator_setsrc" icon="file-import" href="/api/deflator/deflator-setsrc">
+    Set source buffer
+  </Card>
+  <Card title="deflator_settgt" icon="file-export" href="/api/deflator/deflator-settgt">
+    Set target buffer
+  </Card>
+  <Card title="deflator_setdctnr" icon="book" href="/api/deflator/deflator-setdctnr">
+    Set compression dictionary
+  </Card>
+  <Card title="deflator_reset" icon="rotate-right" href="/api/deflator/deflator-reset">
+    Reset to initial state
+  </Card>
+</CardGroup>

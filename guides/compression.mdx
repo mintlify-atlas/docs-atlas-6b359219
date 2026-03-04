@@ -1,0 +1,211 @@
+---
+title: "Compression Guide"
+description: "Learn how to compress data using Jdeflate's deflator with streaming support"
+---
+
+Jdeflate provides a stream-oriented compression API through the `deflator` module. This guide covers the complete workflow for compressing data efficiently.
+
+## Including the Header
+
+First, include the deflator header in your project:
+
+```c
+#include <jdeflate/deflator.h>
+```
+
+For C++ projects:
+
+```cpp
+extern "C" {
+    #include <jdeflate/deflator.h>
+}
+```
+
+## Creating a Deflator Instance
+
+<Steps>
+  <Step title="Create the deflator">
+    Initialize a deflator instance with compression level and flags:
+
+    ```c
+    TDeflator* deflator;
+    /* flags, compression level, and memory allocator */
+    deflator = deflator_create(0, 6, NULL);
+    if (deflator == NULL) {
+        /* handle the error */
+    }
+    ```
+
+    <Note>
+      **Compression Levels**: Valid levels range from 0-9, where 0 is no compression and 9 is maximum compression. Level 6 provides a good balance between speed and compression ratio.
+    </Note>
+  </Step>
+
+  <Step title="Understand the parameters">
+    - **flags**: Use `0` for default behavior or `DEFLT_FIXEDCODES` for fixed Huffman codes
+    - **level**: Compression level (0-9)
+    - **allocator**: Custom memory allocator or `NULL` for default
+  </Step>
+</Steps>
+
+## Streaming Compression Workflow
+
+The deflator uses a streaming approach with nested loops to handle large data efficiently:
+
+```c
+unsigned int status;
+bool final;
+
+final = 0;
+do {
+    /* ...read or fetch some data into the source buffer */
+    deflator_setsrc(deflator, source, sourcesize);
+    if (/*...no more input*/) {
+        final = 1;
+    }
+
+    do {
+        deflator_settgt(deflator, target, targetsize);
+
+        status = deflator_deflate(deflator, final);
+        /* the target buffer now contains the compressed data */
+        /* and to get the number of bytes that have been written */
+        /* you can use deflator_tgtend(deflator) */
+    } while (status == DEFLT_TGTEXHSTD);
+} while (status == DEFLT_SRCEXHSTD);
+
+/* check for errors */
+if (status == DEFLT_OK) {
+    /* ... compression was successful */
+} else {
+    /* ... handle the error */
+}
+```
+
+### Understanding the Loop Pattern
+
+<Accordion title="Outer Loop - Source Data">
+  The outer loop handles reading input data:
+  - Read chunks of uncompressed data into your source buffer
+  - Call `deflator_setsrc()` to set the source buffer
+  - Set `final = 1` when no more input is available
+  - Continue until `status != DEFLT_SRCEXHSTD`
+</Accordion>
+
+<Accordion title="Inner Loop - Target Data">
+  The inner loop handles writing compressed output:
+  - Set the target buffer with `deflator_settgt()`
+  - Call `deflator_deflate()` to compress data
+  - Use `deflator_tgtend()` to get the number of bytes written
+  - Continue until `status != DEFLT_TGTEXHSTD`
+</Accordion>
+
+## Return Codes
+
+The `deflator_deflate()` function returns one of these status codes:
+
+| Status | Description |
+|--------|-------------|
+| `DEFLT_OK` | Compression completed successfully |
+| `DEFLT_SRCEXHSTD` | Source buffer exhausted, need more input |
+| `DEFLT_TGTEXHSTD` | Target buffer exhausted, need more output space |
+| `DEFLT_ERROR` | An error occurred |
+
+## Getting Processed Byte Counts
+
+Use these functions to track progress:
+
+```c
+/* Get number of bytes read from source buffer */
+uintxx bytes_read = deflator_srcend(deflator);
+
+/* Get number of bytes written to target buffer */
+uintxx bytes_written = deflator_tgtend(deflator);
+```
+
+## Flush Modes
+
+When calling `deflator_deflate()`, you can specify different flush modes:
+
+```c
+typedef enum {
+    DEFLT_NOFLUSH = 0,  /* Continue compression */
+    DEFLT_END     = 1,  /* Finalize the stream */
+    DEFLT_FLUSH   = 2   /* Flush pending data */
+} eDEFLTFlush;
+```
+
+<Warning>
+  When using `DEFLT_FLUSH` or `DEFLT_END`, do not set new source data until the deflator returns `DEFLT_OK`. The deflator will flush all pending data before accepting new input.
+</Warning>
+
+## Advanced Features
+
+### Using a Dictionary
+
+For better compression of similar data:
+
+```c
+deflator_setdctnr(deflator, dict, dictsize);
+```
+
+### Resetting the Deflator
+
+To reuse the deflator instance for a new stream:
+
+```c
+deflator_reset(deflator);
+```
+
+## Cleaning Up
+
+Always destroy the deflator when finished:
+
+```c
+deflator_destroy(deflator);
+```
+
+## Complete Example
+
+Here's a complete example compressing a file:
+
+```c
+#include <jdeflate/deflator.h>
+#include <stdio.h>
+
+#define CHUNK_SIZE 16384
+
+int compress_file(FILE* input, FILE* output) {
+    TDeflator* deflator;
+    unsigned char source[CHUNK_SIZE];
+    unsigned char target[CHUNK_SIZE];
+    unsigned int status;
+    bool final = 0;
+    size_t bytes_read;
+
+    deflator = deflator_create(0, 6, NULL);
+    if (!deflator) return -1;
+
+    do {
+        bytes_read = fread(source, 1, CHUNK_SIZE, input);
+        if (bytes_read < CHUNK_SIZE) final = 1;
+
+        deflator_setsrc(deflator, source, bytes_read);
+
+        do {
+            deflator_settgt(deflator, target, CHUNK_SIZE);
+            status = deflator_deflate(deflator, final);
+
+            size_t have = deflator_tgtend(deflator);
+            fwrite(target, 1, have, output);
+        } while (status == DEFLT_TGTEXHSTD);
+    } while (status == DEFLT_SRCEXHSTD);
+
+    deflator_destroy(deflator);
+    return (status == DEFLT_OK) ? 0 : -1;
+}
+```
+
+<Note>
+  For simpler use cases without streaming, see the [Buffer Mode Guide](/guides/buffer-mode).
+</Note>

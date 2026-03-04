@@ -1,0 +1,271 @@
+---
+title: "Windows DLL"
+description: "Configure Jdeflate as a shared library (DLL) on Windows using MSVC and the JDEFLATE_DLL macro"
+---
+
+Jdeflate supports building as a shared library (DLL) on Windows. This guide covers the necessary configuration for MSVC and MinGW.
+
+## JDEFLATE_DLL Macro
+
+When using Jdeflate as a shared library on Windows, you must define the `JDEFLATE_DLL` macro. This ensures proper import/export declarations for DLL functions.
+
+<Warning>
+Failing to define `JDEFLATE_DLL` when linking against the DLL will result in linker errors.
+</Warning>
+
+## Building the DLL with Meson
+
+Meson automatically handles DLL building on Windows:
+
+<Steps>
+  <Step title="Configure Build">
+    ```bash
+    meson setup builddir --default-library=shared
+    ```
+  </Step>
+  
+  <Step title="Compile">
+    ```bash
+    meson compile -C builddir
+    ```
+  </Step>
+  
+  <Step title="Install">
+    ```bash
+    meson install -C builddir
+    ```
+  </Step>
+</Steps>
+
+The build system automatically defines `JDEFLATE_DLL` for shared library builds on Windows (see meson.build:96-101).
+
+## MSVC Integration
+
+### Visual Studio Project Setup
+
+<CodeGroup>
+```xml vcxproj Configuration
+<PropertyGroup>
+  <ConfigurationType>Application</ConfigurationType>
+</PropertyGroup>
+
+<ItemDefinitionGroup>
+  <ClCompile>
+    <AdditionalIncludeDirectories>C:\Program Files\jdeflate\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+    <PreprocessorDefinitions>JDEFLATE_DLL;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+  </ClCompile>
+  <Link>
+    <AdditionalLibraryDirectories>C:\Program Files\jdeflate\lib;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
+    <AdditionalDependencies>jdeflate.lib;%(AdditionalDependencies)</AdditionalDependencies>
+  </Link>
+</ItemDefinitionGroup>
+```
+
+```bash Command Line
+cl /DJDEFLATE_DLL /I"C:\Program Files\jdeflate\include" main.c /link /LIBPATH:"C:\Program Files\jdeflate\lib" jdeflate.lib
+```
+</CodeGroup>
+
+### CMake with MSVC
+
+```cmake
+cmake_minimum_required(VERSION 3.10)
+project(MyApp)
+
+set(JDEFLATE_ROOT "C:/Program Files/jdeflate")
+
+add_executable(myapp main.c)
+
+target_include_directories(myapp PRIVATE "${JDEFLATE_ROOT}/include")
+target_link_directories(myapp PRIVATE "${JDEFLATE_ROOT}/lib")
+target_link_libraries(myapp PRIVATE jdeflate)
+
+# Define JDEFLATE_DLL for DLL usage
+target_compile_definitions(myapp PRIVATE JDEFLATE_DLL)
+```
+
+## Code Example with JDEFLATE_DLL
+
+```c
+// Define before including headers
+#define JDEFLATE_DLL
+
+#include <jdeflate/deflator.h>
+#include <jdeflate/inflator.h>
+#include <stdio.h>
+
+int main(void) {
+    TDeflator* deflator;
+    
+    // Create deflator with compression level 6
+    deflator = deflator_create(0, 6, NULL);
+    if (deflator == NULL) {
+        fprintf(stderr, "Failed to create deflator\\n");
+        return 1;
+    }
+    
+    unsigned char input[] = "Hello, Windows DLL!";
+    unsigned char output[256];
+    
+    deflator_setsrc(deflator, input, sizeof(input) - 1);
+    deflator_settgt(deflator, output, sizeof(output));
+    
+    if (deflator_deflate(deflator, 1) != DEFLT_OK) {
+        fprintf(stderr, "Compression failed\\n");
+        deflator_destroy(deflator);
+        return 1;
+    }
+    
+    printf("Compressed %zu bytes\\n", deflator_tgtend(deflator));
+    
+    deflator_destroy(deflator);
+    return 0;
+}
+```
+
+<Note>
+You can also define `JDEFLATE_DLL` via compiler flags instead of in code:
+```bash
+cl /DJDEFLATE_DLL main.c ...
+```
+</Note>
+
+## MinGW-w64 Integration
+
+For MinGW-w64 on Windows:
+
+```bash
+gcc -DJDEFLATE_DLL -I/mingw64/include -c main.c
+gcc -o myapp.exe main.o -L/mingw64/lib -ljdeflate
+```
+
+## DLL Deployment
+
+When distributing your application:
+
+<Steps>
+  <Step title="Include DLL">
+    Copy `jdeflate.dll` to your application directory or a directory in the system PATH:
+    
+    ```
+    MyApp/
+    ├── myapp.exe
+    └── jdeflate.dll
+    ```
+  </Step>
+  
+  <Step title="Verify Dependencies">
+    Use Dependency Walker or `dumpbin` to verify DLL dependencies:
+    
+    ```bash
+    dumpbin /DEPENDENTS myapp.exe
+    ```
+  </Step>
+  
+  <Step title="Test Runtime">
+    Run your application to ensure the DLL is found:
+    
+    ```bash
+    myapp.exe
+    ```
+  </Step>
+</Steps>
+
+<Warning>
+If you see "The program can't start because jdeflate.dll is missing", ensure the DLL is in the same directory as your executable or in your system PATH.
+</Warning>
+
+## Static Linking Alternative
+
+If you prefer static linking on Windows, build without the DLL flag:
+
+```bash
+meson setup builddir --default-library=static
+meson compile -C builddir
+```
+
+Then link without defining `JDEFLATE_DLL`:
+
+```bash
+cl /I"C:\Program Files\jdeflate\include" main.c /link /LIBPATH:"C:\Program Files\jdeflate\lib" jdeflate.lib
+```
+
+## Build Configuration Reference
+
+From the Meson build file (meson.build:96-101):
+
+```python
+lib = both_libraries(
+    meson.project_name(), 
+    install: true, 
+    pic: true, 
+    sources: projectsources, 
+    dependencies: deps, 
+    soversion: versionarray[0], 
+    c_args: ['-DJDEFLATE_BUILDDLL', '-DJDEFLATE_DLL']
+)
+
+extraargs = []
+if target_machine.system() in ['windows', 'cygwin']:
+    extraargs += ['-DJDEFLATE_DLL']
+```
+
+The build system automatically:
+- Defines `JDEFLATE_BUILDDLL` when building the library
+- Defines `JDEFLATE_DLL` for consumers on Windows
+- Creates both static and shared libraries
+
+## C++ Usage
+
+For C++ projects on Windows:
+
+```cpp
+#define JDEFLATE_DLL
+
+extern "C" {
+    #include <jdeflate/deflator.h>
+    #include <jdeflate/inflator.h>
+}
+
+#include <iostream>
+
+int main() {
+    TDeflator* deflator = deflator_create(0, 6, nullptr);
+    if (!deflator) {
+        std::cerr << "Failed to create deflator\\n";
+        return 1;
+    }
+    
+    // Use deflator...
+    
+    deflator_destroy(deflator);
+    return 0;
+}
+```
+
+## Troubleshooting
+
+### Unresolved External Symbol
+
+If you encounter linker errors like:
+```
+error LNK2019: unresolved external symbol deflator_create
+```
+
+Ensure you:
+1. Defined `JDEFLATE_DLL` in your preprocessor definitions
+2. Linked against `jdeflate.lib` (import library)
+3. Added the correct library directory to your linker paths
+
+### DLL Not Found at Runtime
+
+If the application fails to start:
+1. Copy `jdeflate.dll` to the executable directory
+2. Add the DLL directory to system PATH
+3. Use Dependency Walker to verify all dependencies are satisfied
+
+## Next Steps
+
+- Explore [C Projects](/integration/c-projects) for general C integration
+- Learn about [C++ Projects](/integration/cpp-projects) for cross-platform C++ builds
+- See [Meson Subproject](/integration/meson-subproject) for embedding Jdeflate in your Meson build

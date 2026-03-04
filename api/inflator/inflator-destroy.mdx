@@ -1,0 +1,106 @@
+---
+title: "inflator_destroy"
+description: "Destroy an inflator instance and free associated resources"
+---
+
+## Function Signature
+
+```c
+void inflator_destroy(TInflator* state);
+```
+
+Destroys an inflator instance and frees all associated resources.
+
+## Parameters
+
+<ParamField path="state" type="TInflator*">
+  Pointer to the inflator instance to destroy. This should be an inflator created with `inflator_create()`.
+</ParamField>
+
+## Return Value
+
+This function does not return a value.
+
+## Usage Example
+
+```c
+#include <jdeflate/inflator.h>
+
+// Create an inflator instance
+TInflator* inflator = inflator_create(0, NULL);
+if (!inflator) {
+    fprintf(stderr, "Failed to create inflator\n");
+    return -1;
+}
+
+// Use the inflator for decompression
+eINFLTResult result;
+inflator_setsrc(inflator, compressed_data, compressed_size);
+inflator_settgt(inflator, output_buffer, output_size);
+result = inflator_inflate(inflator, 1);
+
+// Process results...
+
+// Destroy the inflator when done
+inflator_destroy(inflator);
+inflator = NULL;  // Good practice to avoid dangling pointers
+```
+
+## Complete Example with Error Handling
+
+```c
+#include <jdeflate/inflator.h>
+#include <stdio.h>
+#include <stdlib.h>
+
+int decompress_data(const uint8* compressed, uintxx comp_size,
+                    uint8* output, uintxx out_size)
+{
+    TInflator* inflator = NULL;
+    eINFLTResult result;
+    int ret = 0;
+
+    // Create inflator
+    inflator = inflator_create(0, NULL);
+    if (!inflator) {
+        fprintf(stderr, "Failed to create inflator\n");
+        return -1;
+    }
+
+    // Perform decompression
+    inflator_setsrc(inflator, compressed, comp_size);
+    inflator_settgt(inflator, output, out_size);
+    result = inflator_inflate(inflator, 1);
+
+    if (result == INFLT_ERROR) {
+        fprintf(stderr, "Inflation error: %u\n", inflator->error);
+        ret = -1;
+    } else if (result != INFLT_OK) {
+        fprintf(stderr, "Incomplete inflation\n");
+        ret = -1;
+    }
+
+    // Always destroy, even on error
+    inflator_destroy(inflator);
+    
+    return ret;
+}
+```
+
+## Notes
+
+<Note>
+- Always call `inflator_destroy()` when you're done with an inflator instance to prevent memory leaks.
+- It's safe to call `inflator_destroy()` even if the inflator is in an error state.
+- The function handles all internal cleanup, including freeing any dictionaries or internal buffers.
+</Note>
+
+<Warning>
+- Do not use the inflator pointer after calling `inflator_destroy()`. Set it to `NULL` to avoid accidental use.
+- Passing `NULL` to `inflator_destroy()` may result in undefined behavior. Always pass a valid inflator instance.
+</Warning>
+
+## See Also
+
+- [inflator_create()](/api/inflator/inflator-create) - Create an inflator instance
+- [inflator_reset()](/api/inflator/inflator-reset) - Reset an inflator for reuse
