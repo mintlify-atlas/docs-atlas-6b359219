@@ -1,0 +1,152 @@
+{
+  "projectType": "sdk-library",
+  "projectName": "Jdeflate",
+  "projectDescription": "A portable C library implementing the DEFLATE compression algorithm with support for raw DEFLATE, zlib, and gzip formats",
+  "theme": "aspen",
+  "primaryColor": "#94cb04",
+  "lightColor": "#545454",
+  "darkColor": null,
+  "navigation": {
+    "tabs": [
+      {
+        "tab": "Documentation",
+        "groups": [
+          {
+            "group": "Get Started",
+            "pages": [
+              "introduction",
+              "installation",
+              "quickstart"
+            ]
+          },
+          {
+            "group": "Core Concepts",
+            "pages": [
+              "concepts/stream-oriented-api",
+              "concepts/memory-management",
+              "concepts/error-handling"
+            ]
+          },
+          {
+            "group": "Guides",
+            "pages": [
+              "guides/compression",
+              "guides/decompression",
+              "guides/buffer-mode",
+              "guides/zstrm-usage",
+              "guides/building-from-source"
+            ]
+          },
+          {
+            "group": "Integration",
+            "pages": [
+              "integration/c-projects",
+              "integration/cpp-projects",
+              "integration/windows-dll",
+              "integration/meson-subproject"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "API Reference",
+        "groups": [
+          {
+            "group": "Deflator API",
+            "pages": [
+              "api/deflator/overview",
+              "api/deflator/deflator-create",
+              "api/deflator/deflator-destroy",
+              "api/deflator/deflator-deflate",
+              "api/deflator/deflator-setsrc",
+              "api/deflator/deflator-settgt",
+              "api/deflator/deflator-setdctnr",
+              "api/deflator/deflator-reset"
+            ]
+          },
+          {
+            "group": "Inflator API",
+            "pages": [
+              "api/inflator/overview",
+              "api/inflator/inflator-create",
+              "api/inflator/inflator-destroy",
+              "api/inflator/inflator-inflate",
+              "api/inflator/inflator-setsrc",
+              "api/inflator/inflator-settgt",
+              "api/inflator/inflator-setdctnr",
+              "api/inflator/inflator-reset"
+            ]
+          },
+          {
+            "group": "ZStrm API",
+            "pages": [
+              "api/zstrm/overview",
+              "api/zstrm/zstrm-create",
+              "api/zstrm/zstrm-destroy",
+              "api/zstrm/zstrm-deflate",
+              "api/zstrm/zstrm-inflate",
+              "api/zstrm/zstrm-flush",
+              "api/zstrm/zstrm-setsource",
+              "api/zstrm/zstrm-setsourcefn",
+              "api/zstrm/zstrm-settargetfn",
+              "api/zstrm/zstrm-setdctn",
+              "api/zstrm/zstrm-reset",
+              "api/zstrm/checksums"
+            ]
+          },
+          {
+            "group": "Types & Constants",
+            "pages": [
+              "api/types/deflator-types",
+              "api/types/inflator-types",
+              "api/types/zstrm-types"
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "keyFeatures": [
+    "Stream-oriented compression and decompression",
+    "Support for raw DEFLATE, zlib, and gzip formats",
+    "Predictable memory allocation patterns",
+    "Portable C99 implementation",
+    "High-level ZStrm API with callback support",
+    "Custom dictionary support",
+    "CRC32 and Adler32 checksum utilities",
+    "Assembly optimizations for x86-64"
+  ],
+  "publicApiSurface": [
+    "deflator_create",
+    "deflator_destroy",
+    "deflator_deflate",
+    "deflator_setsrc",
+    "deflator_settgt",
+    "deflator_srcend",
+    "deflator_tgtend",
+    "deflator_setdctnr",
+    "deflator_reset",
+    "inflator_create",
+    "inflator_destroy",
+    "inflator_inflate",
+    "inflator_setsrc",
+    "inflator_settgt",
+    "inflator_srcend",
+    "inflator_tgtend",
+    "inflator_setdctnr",
+    "inflator_reset",
+    "zstrm_create",
+    "zstrm_destroy",
+    "zstrm_inflate",
+    "zstrm_deflate",
+    "zstrm_flush",
+    "zstrm_setsource",
+    "zstrm_setsourcefn",
+    "zstrm_settargetfn",
+    "zstrm_setdctn",
+    "zstrm_reset",
+    "zstrm_crc32combine",
+    "zstrm_crc32update",
+    "zstrm_adler32update"
+  ]
+}
