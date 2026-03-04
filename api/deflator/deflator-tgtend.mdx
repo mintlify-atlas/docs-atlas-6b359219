@@ -1,0 +1,141 @@
+---
+title: deflator_tgtend
+description: Get the number of bytes written to the target buffer
+---
+
+## Function Signature
+
+```c
+CTB_INLINE uintxx deflator_tgtend(TDeflator* state)
+```
+
+## Description
+
+Returns the number of bytes that have been written to the target buffer since the last call to `deflator_settgt()`. This function is essential for retrieving the compressed output data.
+
+## Parameters
+
+<ParamField path="state" type="TDeflator*" required>
+  Pointer to the deflator instance
+</ParamField>
+
+## Return Value
+
+<ResponseField name="return" type="uintxx">
+  The number of bytes written to the target buffer. This value ranges from 0 to the size specified in the last `deflator_settgt()` call.
+</ResponseField>
+
+## Implementation
+
+This is an inline function defined in `deflator.h`:
+
+```c
+CTB_INLINE uintxx
+deflator_tgtend(TDeflator* state)
+{
+    CTB_ASSERT(state);
+    return (uintxx) (state->target - state->tbgn);
+}
+```
+
+## Usage Example
+
+### Basic Output Retrieval
+
+```c
+#include <jdeflate/deflator.h>
+
+TDeflator* deflator = deflator_create(0, 6, NULL);
+uint8_t source[1024] = "Data to compress";
+uint8_t target[2048];
+
+deflator_setsrc(deflator, source, strlen((char*)source));
+deflator_settgt(deflator, target, sizeof(target));
+
+if (deflator_deflate(deflator, 1) == DEFLT_OK) {
+    // Get the size of compressed data
+    size_t compressed_size = deflator_tgtend(deflator);
+    
+    // Write compressed data
+    fwrite(target, 1, compressed_size, output_file);
+    printf("Compressed %zu bytes\n", compressed_size);
+}
+
+deflator_destroy(deflator);
+```
+
+### Streaming Compression
+
+```c
+uint8_t source[4096];
+uint8_t target[4096];
+eDEFLTResult result;
+
+do {
+    size_t bytes_read = fread(source, 1, sizeof(source), input_file);
+    if (bytes_read == 0) break;
+    
+    deflator_setsrc(deflator, source, bytes_read);
+    
+    do {
+        deflator_settgt(deflator, target, sizeof(target));
+        result = deflator_deflate(deflator, feof(input_file));
+        
+        // Get compressed output size and write it
+        size_t output_size = deflator_tgtend(deflator);
+        if (output_size > 0) {
+            fwrite(target, 1, output_size, output_file);
+        }
+    } while (result == DEFLT_TGTEXHSTD);
+    
+} while (result == DEFLT_SRCEXHSTD);
+```
+
+### Dynamic Buffer Allocation
+
+```c
+// Allocate initial buffer
+size_t buffer_size = 4096;
+uint8_t* output = malloc(buffer_size);
+size_t total_written = 0;
+
+deflator_setsrc(deflator, source, source_size);
+
+eDEFLTResult result;
+do {
+    deflator_settgt(deflator, output + total_written,
+                    buffer_size - total_written);
+    result = deflator_deflate(deflator, 1);
+    
+    // Get bytes written in this iteration
+    total_written += deflator_tgtend(deflator);
+    
+    if (result == DEFLT_TGTEXHSTD) {
+        // Need more output space, grow buffer
+        buffer_size *= 2;
+        output = realloc(output, buffer_size);
+    }
+} while (result == DEFLT_TGTEXHSTD);
+
+printf("Total compressed size: %zu bytes\n", total_written);
+```
+
+## Notes
+
+<Note>
+  Always call this function after `deflator_deflate()` to determine how much data was written to the target buffer.
+</Note>
+
+<Warning>
+  If `deflator_deflate()` returns `DEFLT_TGTEXHSTD`, the target buffer is full and `deflator_tgtend()` will return the full buffer size. You must provide a new target buffer before continuing.
+</Warning>
+
+<Note>
+  The return value is cumulative for the current target buffer. After calling `deflator_settgt()` again, the counter resets to 0.
+</Note>
+
+## Related Functions
+
+- [`deflator_settgt`](/api/deflator/deflator-settgt) - Set the target buffer
+- [`deflator_srcend`](/api/deflator/deflator-srcend) - Get bytes consumed from source buffer
+- [`deflator_deflate`](/api/deflator/deflator-deflate) - Perform compression

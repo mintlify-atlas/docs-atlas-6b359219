@@ -1,0 +1,183 @@
+---
+title: inflator_tgtend
+description: Get the number of bytes written to the target buffer
+---
+
+## Function Signature
+
+```c
+CTB_INLINE uintxx inflator_tgtend(TInflator* state)
+```
+
+## Description
+
+Returns the number of bytes that have been written to the target buffer since the last call to `inflator_settgt()`. This function is essential for retrieving the decompressed output data.
+
+## Parameters
+
+<ParamField path="state" type="TInflator*" required>
+  Pointer to the inflator instance
+</ParamField>
+
+## Return Value
+
+<ResponseField name="return" type="uintxx">
+  The number of bytes written to the target buffer. This value ranges from 0 to the size specified in the last `inflator_settgt()` call.
+</ResponseField>
+
+## Implementation
+
+This is an inline function defined in `inflator.h`:
+
+```c
+CTB_INLINE uintxx
+inflator_tgtend(TInflator* state)
+{
+    CTB_ASSERT(state);
+    return (uintxx) (state->target - state->tbgn);
+}
+```
+
+## Usage Example
+
+### Basic Output Retrieval
+
+```c
+#include <jdeflate/inflator.h>
+
+TInflator* inflator = inflator_create(0, NULL);
+uint8_t source[1024];  // Compressed data
+uint8_t target[4096];  // Decompression buffer
+
+// Read compressed data
+size_t compressed_size = fread(source, 1, sizeof(source), input_file);
+
+inflator_setsrc(inflator, source, compressed_size);
+inflator_settgt(inflator, target, sizeof(target));
+
+if (inflator_inflate(inflator, 1) == INFLT_OK) {
+    // Get the size of decompressed data
+    size_t decompressed_size = inflator_tgtend(inflator);
+    
+    // Write decompressed data
+    fwrite(target, 1, decompressed_size, output_file);
+    printf("Decompressed %zu bytes\n", decompressed_size);
+}
+
+inflator_destroy(inflator);
+```
+
+### Streaming Decompression
+
+```c
+uint8_t source[4096];
+uint8_t target[8192];
+eINFLTResult result;
+
+do {
+    size_t bytes_read = fread(source, 1, sizeof(source), compressed_file);
+    if (bytes_read == 0) break;
+    
+    inflator_setsrc(inflator, source, bytes_read);
+    
+    do {
+        inflator_settgt(inflator, target, sizeof(target));
+        result = inflator_inflate(inflator, feof(compressed_file));
+        
+        // Get decompressed output size and write it
+        size_t output_size = inflator_tgtend(inflator);
+        if (output_size > 0) {
+            fwrite(target, 1, output_size, output_file);
+        }
+        
+        if (result == INFLT_ERROR) {
+            fprintf(stderr, "Decompression failed\n");
+            break;
+        }
+    } while (result == INFLT_TGTEXHSTD);
+    
+} while (result == INFLT_SRCEXHSTD);
+```
+
+### Memory-to-Memory Decompression
+
+```c
+// Decompress entire data in memory
+size_t output_capacity = 1024 * 1024;  // 1MB initial capacity
+uint8_t* output = malloc(output_capacity);
+size_t total_decompressed = 0;
+
+inflator_setsrc(inflator, compressed_data, compressed_size);
+
+eINFLTResult result;
+do {
+    // Check if we need to grow the output buffer
+    if (total_decompressed >= output_capacity) {
+        output_capacity *= 2;
+        output = realloc(output, output_capacity);
+    }
+    
+    inflator_settgt(inflator, output + total_decompressed,
+                    output_capacity - total_decompressed);
+    result = inflator_inflate(inflator, 1);
+    
+    // Add bytes written in this iteration
+    total_decompressed += inflator_tgtend(inflator);
+    
+} while (result == INFLT_TGTEXHSTD);
+
+if (result == INFLT_OK) {
+    printf("Successfully decompressed %zu bytes\n", total_decompressed);
+    // Shrink to actual size
+    output = realloc(output, total_decompressed);
+}
+```
+
+### Validating Output Size
+
+```c
+// When you know the expected decompressed size
+size_t expected_size = get_original_size();
+uint8_t* output = malloc(expected_size);
+size_t total = 0;
+
+inflator_setsrc(inflator, compressed_data, compressed_size);
+inflator_settgt(inflator, output, expected_size);
+
+eINFLTResult result = inflator_inflate(inflator, 1);
+total = inflator_tgtend(inflator);
+
+if (result == INFLT_OK && total == expected_size) {
+    printf("Decompression successful and size matches\n");
+} else if (result == INFLT_TGTEXHSTD) {
+    fprintf(stderr, "Error: Decompressed size exceeds expected %zu bytes\n",
+            expected_size);
+} else if (total != expected_size) {
+    fprintf(stderr, "Warning: Decompressed %zu bytes, expected %zu\n",
+            total, expected_size);
+}
+```
+
+## Notes
+
+<Note>
+  Always call this function after `inflator_inflate()` to determine how much data was written to the target buffer.
+</Note>
+
+<Warning>
+  If `inflator_inflate()` returns `INFLT_TGTEXHSTD`, the target buffer is full and `inflator_tgtend()` will return the full buffer size. You must provide a new target buffer before continuing.
+</Warning>
+
+<Note>
+  The return value is cumulative for the current target buffer. After calling `inflator_settgt()` again, the counter resets to 0.
+</Note>
+
+<Info>
+  Even if decompression fails with `INFLT_ERROR`, you should still call this function to retrieve any partial output that was successfully decompressed.
+</Info>
+
+## Related Functions
+
+- [`inflator_settgt`](/api/inflator/inflator-settgt) - Set the target buffer
+- [`inflator_srcend`](/api/inflator/inflator-srcend) - Get bytes consumed from source buffer
+- [`inflator_inflate`](/api/inflator/inflator-inflate) - Perform decompression

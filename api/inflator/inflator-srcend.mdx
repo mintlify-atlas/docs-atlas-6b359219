@@ -1,0 +1,162 @@
+---
+title: inflator_srcend
+description: Get the number of bytes read from the source buffer
+---
+
+## Function Signature
+
+```c
+CTB_INLINE uintxx inflator_srcend(TInflator* state)
+```
+
+## Description
+
+Returns the number of bytes that have been consumed from the source buffer since the last call to `inflator_setsrc()`. This function is useful for tracking decompression progress and determining how much compressed input has been processed.
+
+## Parameters
+
+<ParamField path="state" type="TInflator*" required>
+  Pointer to the inflator instance
+</ParamField>
+
+## Return Value
+
+<ResponseField name="return" type="uintxx">
+  The number of bytes consumed from the source buffer. This value ranges from 0 to the size specified in the last `inflator_setsrc()` call.
+</ResponseField>
+
+## Implementation
+
+This is an inline function defined in `inflator.h`:
+
+```c
+CTB_INLINE uintxx
+inflator_srcend(TInflator* state)
+{
+    CTB_ASSERT(state);
+    return (uintxx) (state->source - state->sbgn);
+}
+```
+
+## Usage Example
+
+### Basic Progress Tracking
+
+```c
+#include <jdeflate/inflator.h>
+
+TInflator* inflator = inflator_create(0, NULL);
+uint8_t source[4096];
+uint8_t target[8192];
+
+// Read compressed data
+size_t bytes_read = fread(source, 1, sizeof(source), compressed_file);
+
+inflator_setsrc(inflator, source, bytes_read);
+inflator_settgt(inflator, target, sizeof(target));
+
+eINFLTResult result = inflator_inflate(inflator, feof(compressed_file));
+
+// Check how much compressed input was consumed
+size_t consumed = inflator_srcend(inflator);
+printf("Processed %zu of %zu compressed bytes\n", consumed, bytes_read);
+
+inflator_destroy(inflator);
+```
+
+### Streaming Decompression with Buffer Management
+
+```c
+size_t total_consumed = 0;
+size_t total_decompressed = 0;
+
+do {
+    size_t bytes_read = fread(source, 1, sizeof(source), compressed_file);
+    if (bytes_read == 0) break;
+    
+    inflator_setsrc(inflator, source, bytes_read);
+    
+    do {
+        inflator_settgt(inflator, target, sizeof(target));
+        result = inflator_inflate(inflator, feof(compressed_file));
+        
+        size_t decompressed = inflator_tgtend(inflator);
+        fwrite(target, 1, decompressed, output_file);
+        total_decompressed += decompressed;
+        
+        if (result == INFLT_ERROR) {
+            fprintf(stderr, "Decompression error at byte %zu\n", total_consumed);
+            break;
+        }
+    } while (result == INFLT_TGTEXHSTD);
+    
+    // Track how much compressed data we've processed
+    size_t consumed = inflator_srcend(inflator);
+    total_consumed += consumed;
+    
+    // Report progress
+    printf("Decompressed %zu bytes from %zu compressed bytes (%.1fx expansion)\n",
+           total_decompressed, total_consumed,
+           (double)total_decompressed / total_consumed);
+           
+} while (result == INFLT_SRCEXHSTD);
+```
+
+### Handling Partial Consumption
+
+```c
+// When not all input is consumed, you need to preserve remaining data
+uint8_t source[4096];
+size_t bytes_in_buffer = 0;
+
+while (!done) {
+    // Read more data into remaining space
+    size_t bytes_read = fread(source + bytes_in_buffer, 1,
+                              sizeof(source) - bytes_in_buffer,
+                              compressed_file);
+    bytes_in_buffer += bytes_read;
+    
+    inflator_setsrc(inflator, source, bytes_in_buffer);
+    inflator_settgt(inflator, target, sizeof(target));
+    
+    eINFLTResult result = inflator_inflate(inflator,
+                                           feof(compressed_file) && bytes_read == 0);
+    
+    // Write decompressed output
+    fwrite(target, 1, inflator_tgtend(inflator), output_file);
+    
+    // Calculate remaining input
+    size_t consumed = inflator_srcend(inflator);
+    size_t remaining = bytes_in_buffer - consumed;
+    
+    // Move remaining data to start of buffer
+    if (remaining > 0) {
+        memmove(source, source + consumed, remaining);
+    }
+    bytes_in_buffer = remaining;
+    
+    if (result == INFLT_OK || result == INFLT_ERROR) {
+        done = 1;
+    }
+}
+```
+
+## Notes
+
+<Note>
+  The return value is only meaningful after calling `inflator_inflate()`. Before that, it will be 0.
+</Note>
+
+<Note>
+  When `inflator_inflate()` returns `INFLT_SRCEXHSTD`, all input has been consumed and you need to provide more compressed data.
+</Note>
+
+<Warning>
+  If not all input is consumed when you reach end-of-file, the remaining bytes should be preserved and included in the next call to `inflator_setsrc()`. Use this function to determine how many bytes to keep.
+</Warning>
+
+## Related Functions
+
+- [`inflator_setsrc`](/api/inflator/inflator-setsrc) - Set the source buffer
+- [`inflator_tgtend`](/api/inflator/inflator-tgtend) - Get bytes written to target buffer
+- [`inflator_inflate`](/api/inflator/inflator-inflate) - Perform decompression

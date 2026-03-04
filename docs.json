@@ -77,6 +77,8 @@
               "api/deflator/deflator-deflate",
               "api/deflator/deflator-setsrc",
               "api/deflator/deflator-settgt",
+              "api/deflator/deflator-srcend",
+              "api/deflator/deflator-tgtend",
               "api/deflator/deflator-setdctnr",
               "api/deflator/deflator-reset"
             ]
@@ -90,6 +92,8 @@
               "api/inflator/inflator-inflate",
               "api/inflator/inflator-setsrc",
               "api/inflator/inflator-settgt",
+              "api/inflator/inflator-srcend",
+              "api/inflator/inflator-tgtend",
               "api/inflator/inflator-setdctnr",
               "api/inflator/inflator-reset"
             ]

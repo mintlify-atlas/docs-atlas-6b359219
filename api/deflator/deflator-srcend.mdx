@@ -1,0 +1,113 @@
+---
+title: deflator_srcend
+description: Get the number of bytes processed from the source buffer
+---
+
+## Function Signature
+
+```c
+CTB_INLINE uintxx deflator_srcend(TDeflator* state)
+```
+
+## Description
+
+Returns the number of bytes that have been consumed from the source buffer since the last call to `deflator_setsrc()`. This function is useful for tracking compression progress and determining how much input data has been processed.
+
+## Parameters
+
+<ParamField path="state" type="TDeflator*" required>
+  Pointer to the deflator instance
+</ParamField>
+
+## Return Value
+
+<ResponseField name="return" type="uintxx">
+  The number of bytes consumed from the source buffer. This value ranges from 0 to the size specified in the last `deflator_setsrc()` call.
+</ResponseField>
+
+## Implementation
+
+This is an inline function defined in `deflator.h`:
+
+```c
+CTB_INLINE uintxx
+deflator_srcend(TDeflator* state)
+{
+    CTB_ASSERT(state);
+    return (uintxx) (state->source - state->sbgn);
+}
+```
+
+## Usage Example
+
+### Basic Progress Tracking
+
+```c
+#include <jdeflate/deflator.h>
+
+TDeflator* deflator = deflator_create(0, 6, NULL);
+uint8_t source[4096];
+uint8_t target[4096];
+
+// Read data into source buffer
+size_t bytes_read = read_input(source, sizeof(source));
+
+deflator_setsrc(deflator, source, bytes_read);
+deflator_settgt(deflator, target, sizeof(target));
+
+eDEFLTResult result = deflator_deflate(deflator, 0);
+
+// Check how much input was consumed
+size_t consumed = deflator_srcend(deflator);
+printf("Processed %zu of %zu input bytes\n", consumed, bytes_read);
+
+deflator_destroy(deflator);
+```
+
+### Streaming with Progress Reporting
+
+```c
+size_t total_input = 0;
+size_t total_output = 0;
+
+do {
+    size_t bytes_read = fread(source, 1, sizeof(source), input_file);
+    if (bytes_read == 0) break;
+    
+    deflator_setsrc(deflator, source, bytes_read);
+    
+    do {
+        deflator_settgt(deflator, target, sizeof(target));
+        result = deflator_deflate(deflator, feof(input_file));
+        
+        size_t bytes_written = deflator_tgtend(deflator);
+        fwrite(target, 1, bytes_written, output_file);
+        total_output += bytes_written;
+    } while (result == DEFLT_TGTEXHSTD);
+    
+    // Track total input processed
+    total_input += deflator_srcend(deflator);
+    
+    // Report progress
+    printf("Progress: %zu bytes in, %zu bytes out (%.1f%% compression)\n",
+           total_input, total_output,
+           100.0 * (1.0 - (double)total_output / total_input));
+           
+} while (result == DEFLT_SRCEXHSTD);
+```
+
+## Notes
+
+<Note>
+  The return value is only meaningful after calling `deflator_deflate()`. Before that, it will be 0.
+</Note>
+
+<Note>
+  After `deflator_deflate()` returns `DEFLT_SRCEXHSTD`, `deflator_srcend()` will typically equal the size passed to `deflator_setsrc()`, indicating all input has been consumed.
+</Note>
+
+## Related Functions
+
+- [`deflator_setsrc`](/api/deflator/deflator-setsrc) - Set the source buffer
+- [`deflator_tgtend`](/api/deflator/deflator-tgtend) - Get bytes written to target buffer
+- [`deflator_deflate`](/api/deflator/deflator-deflate) - Perform compression
